@@ -1,0 +1,24 @@
+Procesador del lenguaje Boreal
+----------------------------------------------------------------------
+Este manual aspira a ayudar a los alumnos de Traductores de Lenguajes, o cualquier interesado, a efectuar cambios sobre el código fuente del procesador de lenguaje Boreal.
+
+Se puede usar Visual Studio Code para editar ficheros en lenguaje Boreal. Para facilitarlo, se incluye a continuación un enlace a la extensión que facilita el marcado sintáctico: https://marketplace.visualstudio.com/items?itemName=oxixes.boreal-lang.
+
+Las siguientes instrucciones se han planteado con Visual Studio.
+
+Ejecución del programa: 
+	1. En VS, abrir la carpeta 'AnalizadorDescendente':
+		- Desde el menú principal, [FILE] -> [Open Folder] -> Seleccionar la carpeta 'AnalizadorDescendente'. 
+	2. Para editar los argumentos con los que se ejecuta: 
+		- Dentro de la carpeta '.vscode' del proyecto, abrir 'launch.json'
+		- Editar args
+
+Ejecución del programa desde Eclipse:
+	- En la esquina superior derecha debe aparecer un triangulo (símbolo de play). Se debe tener abierto un .java correspondiente
+	- Se generarán los ficheros tokens, parse, tablas de símbolos y los errores encontrados. 
+
+Creación del ejecutable jar: 
+	- Con la extensión 'Project Manager for Java' se puede crear el fichero .jar
+
+
+Autora: Inés Pérez.
