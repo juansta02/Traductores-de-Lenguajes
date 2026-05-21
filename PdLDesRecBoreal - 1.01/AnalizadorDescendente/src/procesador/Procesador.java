@@ -8,11 +8,16 @@ import java.io.FileWriter;
 import java.io.IOException;
 import tslib.TS_Gestor;
 
+// pablo: añadimos import de la clase generador de código objeto
+import traductor.GenCodigoObjeto;
+
 // Clase principal del compilador
 // Se encarga de la configuración y ejecución de los distintos componentes del compilador
 public class Procesador {
 
     public static TS_Gestor gestorTS;
+    // pablo: añadimos instancia global del traductor
+    public static GenCodigoObjeto traductor;
 
     public static void main(String[] args) {
 
@@ -22,7 +27,7 @@ public class Procesador {
         }
         String testFile = args[0];
 
-        //String testFile = "test.txt";
+        // String testFile = "test.txt";
         // Ficheros csv
         String mtFile = "resources//MTD_data.csv";
         // Ficheros txt
@@ -60,8 +65,14 @@ public class Procesador {
             ASin.setOutputParseFile(ptwParse);
             ASin.activarDebug();
 
+            // pablo: añadimos traductor
+            traductor = new GenCodigoObjeto();
+
             // Inicio de ejecución: Analisis lexico, sintactico y semantico sincronizado
             ASin.analizar();
+
+            // pablo: cerrar fichero ens
+            traductor.cerrar();
 
             // Cierre
             ptrTest.close();
