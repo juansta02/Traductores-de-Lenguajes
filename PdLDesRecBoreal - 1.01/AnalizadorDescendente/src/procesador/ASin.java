@@ -1,10 +1,14 @@
 package procesador;
 
 import java.io.BufferedWriter;
+import java.io.FileWriter;
 import java.io.IOException;
+import java.io.PrintWriter;
 import java.util.Arrays;
 import java.util.Objects;
 import java.util.Stack;
+
+import traductor.GenCodigoObjeto;
 import tslib.TS_Gestor.DescripcionAtributo;
 import tslib.TS_Gestor.Tabla;
 import tslib.TS_Gestor.TipoDatoAtributo;
@@ -15,32 +19,65 @@ public class ASin {
     private static Token<?> tokenActual;
     private static BufferedWriter ptwParse;
 
-    //declaraciones del analizador semantico 
+    // declaraciones del analizador semantico
     private static boolean tsGlobal;
     private static boolean zonaDeclaracion;
     private static Integer despGlobal, despLocal;
     private static Integer numEtiq;
 
-    //declaraciones gestor errores
+    // declaraciones gestor errores
     private static Stack<String> TokensPosibles = new Stack<>();
     private static String funcionAnterior;
     private static boolean huboCoincidencia = true;
 
-    //declaracion debug
+    // declaracion debug
     private static boolean debug = false;
+
+    // pablo: variable global con la etiqueta del programa principal
+    private static String etiqInicio;
+    private static String E_verdad;
+    private static String E_falso;
+    private static String Bcola_siguiente;
+    private static String Blq_else;
+    private static String operandoIzq;
+    private static int numTemp = 0;
 
     public static void setOutputParseFile(BufferedWriter parsePtr) {
         ptwParse = parsePtr;
     }
 
+    // pablo:
+    private static int nuevaTemporal() {
+        // Nombre único para la temporal
+        String nombreTemp = "_t" + numTemp++;
 
-    /* Inicia el análisis sintáctico.
+        // Añadirla a la tabla local con un lexema interno
+        int posTemp = Procesador.gestorTS.addEntradaTSLocal(nombreTemp);
+
+        // Ponerle tipo entero
+        Procesador.gestorTS.setTipo(posTemp, "entero");
+
+        // Asignarle el desplazamiento local actual
+        Procesador.gestorTS.setValorAtributoEnt(posTemp, "desplazamiento", despLocal);
+
+        // Guardar el desplazamiento antes de incrementar
+        int despTemp = despLocal;
+
+        // Incrementar el desplazamiento local para la siguiente variable
+        despLocal += 1;
+
+        // Devolver su dirección ENS2025
+        return posTemp;
+    }
+
+    /*
+     * Inicia el análisis sintáctico.
      * Es el punto de entrada del analizador sintáctico.
      * Se encarga de:
-     *  - Iniciar la tabla de símbolos
-     *  - Solicitar el primer token al analizador léxico
-     *  - LLamar al símbolo incial de la gramatica (P)
-     *  - Comprobar el final del fichero
+     * - Iniciar la tabla de símbolos
+     * - Solicitar el primer token al analizador léxico
+     * - LLamar al símbolo incial de la gramatica (P)
+     * - Comprobar el final del fichero
      */
     @SuppressWarnings("CallToPrintStackTrace")
     public static void analizar() {
@@ -53,7 +90,7 @@ public class ASin {
         // Empezar por el axioma inicial
         try {
             tokenActual = ALex.generarToken();
-            P();  // Comienza el análisis sintáctico
+            P(); // Comienza el análisis sintáctico
             tokenActualCoincideCualquiera("EOF");
 
         } catch (ErrorSintacticoException e) {
@@ -72,46 +109,85 @@ public class ASin {
 
     }
 
-    //Funcion Correspondiente al simbolo no terminal: P
-    //Acciones posibles:
-    //      P-> D R
+    // pablo:
+    private static String obtenerDireccion(int idPos) {
+        int desp = Procesador.gestorTS.getValorAtributoEnt(idPos, "desplazamiento");
+        int modo = Procesador.gestorTS.getValorAtributoEnt(idPos, "modoParametro");
+        System.out.println("obtenerDireccion devolviendo... " + desp);
+        if (idPos > 0) {
+            System.out.println("En realidad entra por aqui");
+            // pos positiva -> tabla GLOBAL -> IY
+            return "#" + desp + "[.IY]";
+        } else if (modo == 1) {
+            // pos negativa + modo referencia -> indirección REVISAR
+            GenCodigoObjeto.emite("MOVE", "#" + desp + "[.SP]", "-", ".R9");
+            return "[.R9]";
+        } else {
+            System.out.println("Entra por aqui");
+            // pos negativa -> tabla LOCAL -> SP
+            return "#" + desp + "[.SP]";
+        }
+    }
+
+    // Funcion Correspondiente al simbolo no terminal: P
+    // Acciones posibles:
+    // P-> D R
     private static Atributos P() {
 
-        printParse("1");    //Accion Sintactica: P-> D R
+        printParse("1"); // Accion Sintactica: P-> D R
 
-        //ASem:     TSG:= CrearTS ()
+        // ASem: TSG:= CrearTS ()
         Procesador.gestorTS.createTSGlobal();
-        //ASem:     TSActual:= TSG
+        // ASem: TSActual:= TSG
         tsGlobal = true;
-        //ASem:     desp_global:=0
+        // ASem: desp_global:=0
         despGlobal = 0;
-        //ASem:     zona_decl:= true 
+        // ASem: zona_decl:= true
         zonaDeclaracion = true;
 
-        //ASin: D
+        // ASin: D
         D();
 
-        //ASint: R
+        // pablo
+        GenCodigoObjeto.emite("ORG", "-", "-", "0");
+        GenCodigoObjeto.emite("RES", String.valueOf(despGlobal), "-", "inicio_estaticas");
+
+        GenCodigoObjeto.emite("ORG", "-", "-", String.valueOf(despGlobal + 10));
+
+        GenCodigoObjeto.emite("ASIG", "#inicio_estaticas", "1", ".IY");
+        GenCodigoObjeto.emite("ASIG", "#inicio_pila", "1", ".SP");
+
+        // pablo: añadimos salto a programa principal
+        etiqInicio = GenCodigoObjeto.nuevaEtiqueta();
+        GenCodigoObjeto.emite("GOTO", "-", "-", etiqInicio);
+
+        GenCodigoObjeto.emite("ORG", "-", "-", "300");
+        GenCodigoObjeto.emite("ETIQ", "-", "-", "inicio_pila");
+
+        GenCodigoObjeto.emite("ORG", "-", "-", "100");
+
+        // ASint: R
         Atributos atrR = R();
         // ASem:
-        //      ¡If (R.program ≠ 1) Then Error (“Debe haber 1 y solo 1 Program”) 
+        // ¡If (R.program ≠ 1) Then Error (“Debe haber 1 y solo 1 Program”)
 
         if (atrR.getProgramCount() > 1) {
             GestorError.writeError("semántico", "Solo debe haber un Programa Principal (PROGRAM)");
         } else if (atrR.getProgramCount() < 1) {
             GestorError.writeError("semántico", "Siempre tiene que haber un Programa Principal (PROGRAM)");
         }
-        //DestruirTS(TSG)
+
+        // DestruirTS(TSG)
         destroyTable(Tabla.GLOBAL);
 
         return null;
     }
 
-    //Funcion Correspondiente al simbolo no terminal: R
-    //Acciones posibles:
-    //      R -> PP R
-    //      R -> PR R
-    //      R -> PF R
+    // Funcion Correspondiente al simbolo no terminal: R
+    // Acciones posibles:
+    // R -> PP R
+    // R -> PR R
+    // R -> PF R
     private static Atributos R() {
 
         Atributos atrR = new Atributos();
@@ -119,9 +195,9 @@ public class ASin {
 
         if (tokenActualCoincideCualquiera("PROGRAM")) {
 
-            printParse("2");    // 2. R -> PP R
+            printParse("2"); // 2. R -> PP R
 
-            //  ASin: PP
+            // ASin: PP
             PP();
             // ASin: R
             atrR1 = R();
@@ -130,8 +206,8 @@ public class ASin {
             atrR.setProgramCount(atrR1.getProgramCount() + 1);
 
         } else if (tokenActualCoincideCualquiera("PROCEDURE")) {
-            printParse("3");    //3.  R -> PR R
-            //  ASin: PR
+            printParse("3"); // 3. R -> PR R
+            // ASin: PR
             PR();
             // ASin: R
             atrR1 = R();
@@ -140,7 +216,7 @@ public class ASin {
             atrR.setProgramCount(atrR1.getProgramCount());
 
         } else if (tokenActualCoincideCualquiera("FUNCTION")) {
-            printParse("4");    //4.  R -> PF R
+            printParse("4"); // 4. R -> PF R
 
             // ASin: PF
             PF();
@@ -151,7 +227,7 @@ public class ASin {
             atrR.setProgramCount(atrR1.getProgramCount());
 
         } else if (tokenActualCoincideCualquiera("EOF")) {
-            printParse("5");    //5.  R -> λ
+            printParse("5"); // 5. R -> λ
 
             // ASem: R.program:= 0
             atrR.setProgramCount(0);
@@ -163,58 +239,68 @@ public class ASin {
 
     // Funcion Correspondiente al simbolo no terminal: PP
     // Acciones posibles:
-    //      PP -> program id ; D Bloque ;
+    // PP -> program id ; D Bloque ;
     private static Atributos PP() {
 
         if (tokenActualCoincideCualquiera("PROGRAM")) {
 
             Atributos atrID;
             Atributos atrBloque;
-            printParse("6");    //      PP -> program id ; D Bloque ;
+            printParse("6"); // PP -> program id ; D Bloque ;
 
-            //ASin: program
+            // ASin: program
             match("PROGRAM");
-            //ASin: id
+            // ASin: id
             atrID = match("ID");
             int idPos = atrID.getPos();
 
-            //ASin: ;
+            // ASin: ;
             match("PYC");
 
-            //ASem: InsetarTipoTS (id.pos, vacío→vacío)
-            Procesador.gestorTS.setTipo(idPos, "procedimiento");    //dado que a la tabla no se puede añadir la palabra programa, se le llamara procedimiento y tendra etiqueta personalizada ("main")
+            // ASem: InsetarTipoTS (id.pos, vacío→vacío)
+            Procesador.gestorTS.setTipo(idPos, "procedimiento"); // dado que a la tabla no se puede añadir la palabra
+                                                                 // programa, se le llamara procedimiento y tendra
+                                                                 // etiqueta personalizada ("main")
             Procesador.gestorTS.setValorAtributoEnt(idPos, "numParametro", 0);
             Procesador.gestorTS.setValorAtributoCad(idPos, "tipoRetorno", "vacío");
 
-            //ASem: InsertarEtiqTS (id.pos, “main”)
+            // ASem: InsertarEtiqTS (id.pos, “main”)
             Procesador.gestorTS.setValorAtributoCad(idPos, "etiqueta", "main");
-            //ASem: TSL:= CrearTS ()
+            // ASem: TSL:= CrearTS ()
             Procesador.gestorTS.createTSLocal();
-            //ASem: TSActual:= TSL
+            // ASem: TSActual:= TSL
             tsGlobal = false;
-            //ASem: despl_local:= 0
+            // ASem: despl_local:= 0
             despLocal = 0;
 
-            //ASin: D
+            // ASin: D
             D();
 
-            //ASem: zona_decl = false
+            // ASem: zona_decl = false
             zonaDeclaracion = false;
 
-            //ASin: Bloque
+            // pablo: etiqueta de inicio de programa principal
+            GenCodigoObjeto.emite("ETIQ", "-", "-", etiqInicio);
+
+            // ASin: Bloque
             atrBloque = Bloque();
-            //ASin: ;
+            // ASin: ;
             match("PYC");
 
-            //ASem:
-            // if (Bloque.tipo = tipo_error)   
-            //      then Error (“Error detectado en el desarrollo del cuerpo del Programa principal”)  
-            // if(Bloque.tipoRet ≠ tipo_ok AND Bloque.tipoRet ≠ vacío)   
-            //      then Error (“Programa Principal con instruccion de retorno no vacio”)  
-            //if(Bloque.exit > 0)   
-            //      then Error (“Exit fuera de bucle detectado en Programa Principal”)  
+            // pablo: halt
+            GenCodigoObjeto.emite("HALT", "-", "-", "-");
+
+            // ASem:
+            // if (Bloque.tipo = tipo_error)
+            // then Error (“Error detectado en el desarrollo del cuerpo del Programa
+            // principal”)
+            // if(Bloque.tipoRet ≠ tipo_ok AND Bloque.tipoRet ≠ vacío)
+            // then Error (“Programa Principal con instruccion de retorno no vacio”)
+            // if(Bloque.exit > 0)
+            // then Error (“Exit fuera de bucle detectado en Programa Principal”)
             if (atrBloque.getTipo().equals("tipo_error")) {
-                GestorError.writeError("semántico", "Error detectado en el desarrollo del cuerpo del Programa principal");
+                GestorError.writeError("semántico",
+                        "Error detectado en el desarrollo del cuerpo del Programa principal");
             }
             if (!atrBloque.getRet().equals("tipo_ok") && !atrBloque.getRet().equals("vacío")) {
                 GestorError.writeError("semántico", "Programa Principal con instrucción de retorno no vacío");
@@ -237,9 +323,9 @@ public class ASin {
 
     }
 
-    //Funcion Correspondiente al simbolo no terminal: PR
-    //Acciones posibles:
-    //      PR -> procedure id A ; D Bloque ;
+    // Funcion Correspondiente al simbolo no terminal: PR
+    // Acciones posibles:
+    // PR -> procedure id A ; D Bloque ;
     private static Atributos PR() {
 
         Atributos atrID;
@@ -247,28 +333,31 @@ public class ASin {
         Atributos atrBloque;
         if (tokenActualCoincideCualquiera("PROCEDURE")) {
 
-            printParse("7");    //    7.  PR -> procedure id A ; D Bloque ;
+            printParse("7"); // 7. PR -> procedure id A ; D Bloque ;
 
-            //ASin: procedure
+            // pablo:
+            String etiqProcedure = GenCodigoObjeto.nuevaEtiqueta();
+
+            // ASin: procedure
             match("PROCEDURE");
-            //ASin: id
+            // ASin: id
             atrID = match("ID");
             int idPos = atrID.getPos();
 
-            //ASem: TSL:= CrearTS ()
+            // ASem: TSL:= CrearTS ()
             Procesador.gestorTS.createTSLocal();
-            //ASem: TSActual:= TSL
+            // ASem: TSActual:= TSL
             tsGlobal = false;
-            //ASem: despl_local:= 0
+            // ASem: despl_local:= 0
             despLocal = 0;
 
-            //ASin: A
+            // ASin: A
             atrA = A();
-            //ASin: ;
+            // ASin: ;
             match("PYC");
 
-            //ASem: InsertarTipoTS (id.pos, A.tipo→vacío)
-            //		InsertarModoTS (id.pos, A.referencia)	
+            // ASem: InsertarTipoTS (id.pos, A.tipo→vacío)
+            // InsertarModoTS (id.pos, A.referencia)
             Procesador.gestorTS.setTipo(idPos, "procedimiento");
             Procesador.gestorTS.setValorAtributoCad(idPos, "tipoRetorno", "vacío");
 
@@ -282,31 +371,38 @@ public class ASin {
                 Procesador.gestorTS.setValorAtributoEnt(idPos, "numParametro", 0);
             }
 
-            //ASem: InsertarEtiquetaTS (id.pos, nueva_et())
+            // ASem: InsertarEtiquetaTS (id.pos, nueva_et())
             Procesador.gestorTS.setValorAtributoCad(idPos, "etiqueta", generarEtiqueta());
 
-            //ASin: D
+            // ASin: D
             D();
 
-            //ASem: zona_decl = false
+            // ASem: zona_decl = false
             zonaDeclaracion = false;
 
-            //ASin: Bloque
+            // pablo:
+            GenCodigoObjeto.emite("ETIQ", "-", "-", etiqProcedure);
+
+            // ASin: Bloque
             atrBloque = Bloque();
-            //ASin: ;
+            // ASin: ;
             match("PYC");
 
-            //ASem:
-            // if (Bloque.tipo = tipo_error) 
-            // 				then Error ("Error detectado en el desarrollo del cuerpo del Procedure")
-            // 			if (Bloque.tipoRet ≠ tipo_ok AND Bloque.tipoRet ≠ vacío) 
-            // 				then Error ("Retorno en el procedure incorrecto")
-            // 			if (Bloque.exit > 0) 
-            // 				then Error ("Exit fuera de bucle detectado en Procedure")
+            // pablo: se pone un return por posible procedure sin return al final
+            GenCodigoObjeto.emite("RETURN", "-", "-", "-");
+
+            // ASem:
+            // if (Bloque.tipo = tipo_error)
+            // then Error ("Error detectado en el desarrollo del cuerpo del Procedure")
+            // if (Bloque.tipoRet ≠ tipo_ok AND Bloque.tipoRet ≠ vacío)
+            // then Error ("Retorno en el procedure incorrecto")
+            // if (Bloque.exit > 0)
+            // then Error ("Exit fuera de bucle detectado en Procedure")
             if (atrBloque.getTipo().equals("tipo_error")) {
                 GestorError.writeError("semántico", "Error detectado en el desarrollo del cuerpo del PROCEDURE");
             }
-            if (!atrBloque.getRet().equals("tipo_ok") && !atrBloque.getRet().equals("vacío") && !atrBloque.getRet().equals("")) {
+            if (!atrBloque.getRet().equals("tipo_ok") && !atrBloque.getRet().equals("vacío")
+                    && !atrBloque.getRet().equals("")) {
                 GestorError.writeError("semántico", "PROCEDURE con instrucción de retorno no vacío");
             }
             if (atrBloque.getExit() > 0) {
@@ -326,9 +422,9 @@ public class ASin {
         return null;
     }
 
-    //Funcion Correspondiente al simbolo no terminal: PF
-    //Acciones posibles:
-    //      PF-> function id A : T ; D Bloque ;
+    // Funcion Correspondiente al simbolo no terminal: PF
+    // Acciones posibles:
+    // PF-> function id A : T ; D Bloque ;
     private static Atributos PF() {
 
         Atributos atrID;
@@ -337,32 +433,32 @@ public class ASin {
         Atributos atrBloque;
         if (tokenActualCoincideCualquiera("FUNCTION")) {
 
-            printParse("8");    //      PF -> function id A : T ; D Bloque ;
+            printParse("8"); // PF -> function id A : T ; D Bloque ;
 
-            //ASin: function
+            // ASin: function
             match("FUNCTION");
-            //ASin: id
+            // ASin: id
             atrID = match("ID");
             int idPos = atrID.getPos();
 
-            //ASem: TSL:= CrearTS ()
+            // ASem: TSL:= CrearTS ()
             Procesador.gestorTS.createTSLocal();
-            //ASem: TSActual:= TSL
+            // ASem: TSActual:= TSL
             tsGlobal = false;
-            //ASem: despl_local:= 0
+            // ASem: despl_local:= 0
             despLocal = 0;
 
-            //ASin: A
+            // ASin: A
             atrA = A();
-            //ASin: :
+            // ASin: :
             match("DOSPUNTOS");
-            //ASin: T
+            // ASin: T
             atrT = T();
-            //ASin: ;
+            // ASin: ;
             match("PYC");
 
-            //ASem: InsertarTipoTS (id.pos, A.tipo→T.tipo)
-            //		InsertarModoTS (id.pos, A.referencia)	
+            // ASem: InsertarTipoTS (id.pos, A.tipo→T.tipo)
+            // InsertarModoTS (id.pos, A.referencia)
             Procesador.gestorTS.setTipo(idPos, "función");
             Procesador.gestorTS.setValorAtributoCad(idPos, "tipoRetorno", atrT.getTipo());
 
@@ -376,27 +472,27 @@ public class ASin {
                 Procesador.gestorTS.setValorAtributoEnt(idPos, "numParametro", 0);
             }
 
-            //ASem: InsertarEtiquetaTS (id.pos, nueva_et())
+            // ASem: InsertarEtiquetaTS (id.pos, nueva_et())
             Procesador.gestorTS.setValorAtributoCad(idPos, "etiqueta", generarEtiqueta());
 
-            //ASin: D
+            // ASin: D
             D();
 
-            //ASem: zona_decl = false
+            // ASem: zona_decl = false
             zonaDeclaracion = false;
 
-            //ASin: Bloque
+            // ASin: Bloque
             atrBloque = Bloque();
-            //ASin: ;
+            // ASin: ;
             match("PYC");
 
-            //ASem:
-            // if (Bloque.tipo = tipo_error) 
-            // 				then Error ("Hay un error dentro del bloque")
-            // 			if (Bloque.tipoRet ≠ tipo_ok AND Bloque.tipoRet ≠ T.tipo) 
-            // 				then Error ("Funcion con retorno incorrecto")
-            // 			if (Bloque.exit > 0) 
-            // 				then Error (exit_fuera_bucle)
+            // ASem:
+            // if (Bloque.tipo = tipo_error)
+            // then Error ("Hay un error dentro del bloque")
+            // if (Bloque.tipoRet ≠ tipo_ok AND Bloque.tipoRet ≠ T.tipo)
+            // then Error ("Funcion con retorno incorrecto")
+            // if (Bloque.exit > 0)
+            // then Error (exit_fuera_bucle)
             if (atrBloque.getTipo().equals("tipo_error")) {
                 GestorError.writeError("semántico", "Ha sucedido un error en la función");
             }
@@ -407,11 +503,11 @@ public class ASin {
                 GestorError.writeError("semántico", "EXIT no puede situarse fuera del bucle LOOP");
             }
 
-            //ASem: destruirTS (TSL)
+            // ASem: destruirTS (TSL)
             destroyTable(Tabla.LOCAL);
-            //ASem: TSActual:= TSG
+            // ASem: TSActual:= TSG
             tsGlobal = true;
-            //ASem: zona_decl:= true
+            // ASem: zona_decl:= true
             zonaDeclaracion = true;
         }
 
@@ -420,10 +516,10 @@ public class ASin {
         return null;
     }
 
-    //Funcion Correspondiente al simbolo no terminal: D
-    //Acciones posibles:
-    //      	D → var id : T ;
-    //          D → λ	
+    // Funcion Correspondiente al simbolo no terminal: D
+    // Acciones posibles:
+    // D → var id : T ; DD
+    // D → λ
     private static Atributos D() {
 
         Atributos atrD = new Atributos();
@@ -431,32 +527,32 @@ public class ASin {
         Atributos atrT;
 
         if (tokenActualCoincideCualquiera("VAR")) {
-            printParse("9");    //9.	D → var id : T ; DD
-            //ASin: var
+            printParse("9"); // 9. D → var id : T ; DD
+            // ASin: var
             match("VAR");
-            //ASin: id
+            // ASin: id
             atrID = match("ID");
             int idPos = atrID.getPos();
-            //ASin: :
+            // ASin: :
             match("DOSPUNTOS");
-            //ASin: T
+            // ASin: T
             atrT = T();
-            //ASin: ;
+            // ASin: ;
             match("PYC");
 
-            //ASem:     InsertarTipoTS (id.pos, T.tipo)
+            // ASem: InsertarTipoTS (id.pos, T.tipo)
             Procesador.gestorTS.setTipo(idPos, atrT.getTipo());
-            //ASem: 
-            // if (TSActual = TSG) 	then
-            // 		{
-            // 			InsertarDespTS (id.pos, despl_global)
-            // 			despl_global:= despl_global + T.ancho
-            // 		}
-            // 		else
-            // 		{
-            // 			InsertarDespTS (id.pos, despl_local)
-            // 			despl_local:= despl_local + T.ancho
-            // 		}
+            // ASem:
+            // if (TSActual = TSG) then
+            // {
+            // InsertarDespTS (id.pos, despl_global)
+            // despl_global:= despl_global + T.ancho
+            // }
+            // else
+            // {
+            // InsertarDespTS (id.pos, despl_local)
+            // despl_local:= despl_local + T.ancho
+            // }
 
             if (tsGlobal) {
                 Procesador.gestorTS.setValorAtributoEnt(idPos, "desplazamiento", despGlobal);
@@ -466,23 +562,23 @@ public class ASin {
                 despLocal += atrT.getAncho();
             }
 
-            //ASin: DD
+            // ASin: DD
             DD();
 
         } else if (tokenActualCoincideCualquiera("begin", "function", "procedure", "program", "eof")) {
 
-            printParse("10");   //10.	D → λ
+            printParse("10"); // 10. D → λ
 
-            //SIN ACCIONES SINTACTICAS NI SEMANTICAS
+            // SIN ACCIONES SINTACTICAS NI SEMANTICAS
         }
         debug(atrD);
         return atrD;
     }
 
-    //Funcion Correspondiente al simbolo no terminal: DD
-    //Acciones posibles:
-    //      	DD → id : T ;
-    //          DD → λ	
+    // Funcion Correspondiente al simbolo no terminal: DD
+    // Acciones posibles:
+    // DD → id : T ;
+    // DD → λ
     private static Atributos DD() {
 
         Atributos atrDD = new Atributos();
@@ -491,31 +587,31 @@ public class ASin {
 
         if (tokenActualCoincideCualquiera("ID")) {
 
-            printParse("11"); //11.	DD → id : T ;
+            printParse("11"); // 11. DD → id : T ;
 
-            //ASin: id
+            // ASin: id
             atrID = match("ID");
             int idPos = atrID.getPos();
-            //ASin: :
+            // ASin: :
             match("DOSPUNTOS");
-            //ASin: T
+            // ASin: T
             atrT = T();
-            //ASin: ;
+            // ASin: ;
             match("PYC");
 
-            //ASem:     InsertarTipoTS (id.pos, T.tipo)
+            // ASem: InsertarTipoTS (id.pos, T.tipo)
             Procesador.gestorTS.setTipo(idPos, atrT.getTipo());
-            //ASem: 
-            // if (TSActual = TSG) 	then
-            // 		{
-            // 			InsertarDespTS (id.pos, despl_global)
-            // 			despl_global:= despl_global + T.ancho
-            // 		}
-            // 		else
-            // 		{
-            // 			InsertarDespTS (id.pos, despl_local)
-            // 			despl_local:= despl_local + T.ancho
-            // 		}
+            // ASem:
+            // if (TSActual = TSG) then
+            // {
+            // InsertarDespTS (id.pos, despl_global)
+            // despl_global:= despl_global + T.ancho
+            // }
+            // else
+            // {
+            // InsertarDespTS (id.pos, despl_local)
+            // despl_local:= despl_local + T.ancho
+            // }
 
             if (tsGlobal) {
                 Procesador.gestorTS.setValorAtributoEnt(idPos, "desplazamiento", despGlobal);
@@ -525,62 +621,62 @@ public class ASin {
                 despLocal += atrT.getAncho();
             }
 
-            //ASin: DD
+            // ASin: DD
             DD();
         } else if (tokenActualCoincideCualquiera("begin", "function", "procedure", "program", "eof")) {
 
-            printParse("12"); //12.	DD → λ	
+            printParse("12"); // 12. DD → λ
 
-            //SIN ACCIONES SINTACTICAS NI SEMANTICAS
+            // SIN ACCIONES SINTACTICAS NI SEMANTICAS
         }
         debug(atrDD);
         return atrDD;
     }
 
-    //Funcion Correspondiente al simbolo no terminal: T
-    //Acciones posibles:
-    //      	T → boolean
-    //          T → integer
-    //          T → cadena	
+    // Funcion Correspondiente al simbolo no terminal: T
+    // Acciones posibles:
+    // T → boolean
+    // T → integer
+    // T → cadena
     private static Atributos T() {
 
         Atributos atrT = new Atributos();
 
-        //13.	T → boolean
+        // 13. T → boolean
         if (tokenActualCoincideCualquiera("BOOLEAN")) {
 
             printParse("13");
 
-            //Asin: boolean
+            // Asin: boolean
             match("BOOLEAN");
 
-            //Asem: T.tipo:= lógico
+            // Asem: T.tipo:= lógico
             atrT.setTipo("lógico");
-            //Asem: T.ancho:= 1
+            // Asem: T.ancho:= 1
             atrT.setAncho(1);
 
         } else if (tokenActualCoincideCualquiera("INTEGER")) {
 
-            printParse("14"); //14.	T → integer
+            printParse("14"); // 14. T → integer
 
-            //Asin: integer
+            // Asin: integer
             match("INTEGER");
 
-            //Asem: T.tipo:= entero
+            // Asem: T.tipo:= entero
             atrT.setTipo("entero");
-            //Asem: T.ancho:= 1
+            // Asem: T.ancho:= 1
             atrT.setAncho(1);
 
         } else if (tokenActualCoincideCualquiera("STRING")) {
 
-            printParse("15");   //15.	T → string	
+            printParse("15"); // 15. T → string
 
-            //ASin: string
+            // ASin: string
             match("STRING");
 
-            //ASem: T.tipo:= cadena
+            // ASem: T.tipo:= cadena
             atrT.setTipo("cadena");
-            //ASem: T.ancho := 64
+            // ASem: T.ancho := 64
             atrT.setAncho(64);
 
         }
@@ -590,10 +686,10 @@ public class ASin {
 
     }
 
-    //Funcion Correspondiente al simbolo no terminal: A
-    //Acciones posibles:
-    //      	A → ( X id : T AA )
-    //          A → λ 
+    // Funcion Correspondiente al simbolo no terminal: A
+    // Acciones posibles:
+    // A → ( X id : T AA )
+    // A → λ
     private static Atributos A() {
 
         Atributos atrA = new Atributos();
@@ -604,61 +700,61 @@ public class ASin {
 
         if (tokenActualCoincideCualquiera("PARENT_ABRIR")) {
 
-            printParse("16");   //16.	A → ( X id : T AA )
+            printParse("16"); // 16. A → ( X id : T AA )
 
-            //ASin: (
+            // ASin: (
             match("PARENT_ABRIR");
-            //ASin: X
+            // ASin: X
             atrX = X();
-            //ASin: id
+            // ASin: id
             atrID = match("ID");
             int idPos = atrID.getPos();
-            //ASin: :
+            // ASin: :
             match("DOSPUNTOS");
-            //ASin: T
+            // ASin: T
             atrT = T();
 
-            //ASem: InsertarTipoTS (id.pos, T.tipo)
+            // ASem: InsertarTipoTS (id.pos, T.tipo)
             Procesador.gestorTS.setTipo(idPos, atrT.getTipo());
-            //ASem: InsertarDespTS (id.pos, despl_local)
+            // ASem: InsertarDespTS (id.pos, despl_local)
             Procesador.gestorTS.setValorAtributoEnt(idPos, "desplazamiento", despLocal);
-            //ASem:if (X.referencia) then
-            //  		{
-            //  			InsertaAtributoPasoParametrosTS (id.pos, “referencia”)
-            //  			despl_local:= despl_local + 1
-            //  		}
-            //  	else
-            //  		{
-            //  			InsertaAtributoPasoParametrosTS (id.pos, “valor”)
-            //  			despl_local:= despl_local + T.ancho
-            //  		} 
+            // ASem:if (X.referencia) then
+            // {
+            // InsertaAtributoPasoParametrosTS (id.pos, “referencia”)
+            // despl_local:= despl_local + 1
+            // }
+            // else
+            // {
+            // InsertaAtributoPasoParametrosTS (id.pos, “valor”)
+            // despl_local:= despl_local + T.ancho
+            // }
 
             if (atrX.getReferencia().equals("referencia")) {
                 despLocal += 1;
                 Procesador.gestorTS.setValorAtributoEnt(idPos, "modoParametro", 1);
 
-            } else if (atrX.getReferencia().equals("valor")) {    //valor
+            } else if (atrX.getReferencia().equals("valor")) { // valor
                 despLocal += atrT.getAncho();
                 Procesador.gestorTS.setValorAtributoEnt(idPos, "modoParametro", 0);
             }
 
-            //ASin: AA
+            // ASin: AA
             atrAA = AA();
-            //ASin: )
+            // ASin: )
             match("PARENT_CERRAR");
 
-            //ASem: if (AA.tipo ≠ vacío) then 
-            //		{
-            //			A.tipo:= T.tipo x AA.tipo
-            //			A.referencia:= X.referencia x AA.referencia  // producto cartesiano de enteros
-            //		    A.long:= AA.long + 1
-            //          } 
-            //        else 
-            //		{
-            //			A.tipo:= T.tipo
-            //			A.referencia:= X.referencia 
-            //			A.long:= 1
-            //		}
+            // ASem: if (AA.tipo ≠ vacío) then
+            // {
+            // A.tipo:= T.tipo x AA.tipo
+            // A.referencia:= X.referencia x AA.referencia // producto cartesiano de enteros
+            // A.long:= AA.long + 1
+            // }
+            // else
+            // {
+            // A.tipo:= T.tipo
+            // A.referencia:= X.referencia
+            // A.long:= 1
+            // }
             if (atrAA.getTipo().equals("vacío")) {
                 atrA.setTipo(atrT.getTipo());
                 atrA.setReferencia(atrX.getReferencia());
@@ -672,22 +768,22 @@ public class ASin {
 
         } else if (tokenActualCoincideCualquiera("DOSPUNTOS", "PYC")) {
 
-            printParse("17");   //17.	A → λ 
-            //ASem: A.tipo = vacío
+            printParse("17"); // 17. A → λ
+            // ASem: A.tipo = vacío
             atrA.setTipo("vacío");
-            //ASem: A.long = 0
+            // ASem: A.long = 0
             atrA.setLong(0);
-            //ASem: A.referencia = ""
+            // ASem: A.referencia = ""
             atrA.setReferencia("");
         }
         debug(atrA);
         return atrA;
     }
 
-    //Funcion Correspondiente al simbolo no terminal: AA
-    //Acciones posibles:
-    //      	AA → ; X id : T AA1 
-    //          AA → λ
+    // Funcion Correspondiente al simbolo no terminal: AA
+    // Acciones posibles:
+    // AA → ; X id : T AA1
+    // AA → λ
     private static Atributos AA() {
 
         Atributos atrAA = new Atributos();
@@ -698,58 +794,58 @@ public class ASin {
 
         if (tokenActualCoincideCualquiera("PYC")) {
 
-            printParse("18");   //18.	AA → ; X id : T AA1 
-            //ASin: ;
+            printParse("18"); // 18. AA → ; X id : T AA1
+            // ASin: ;
             match("PYC");
-            //ASin: X
+            // ASin: X
             atrX = X();
-            //ASin: id
+            // ASin: id
             atrID = match("ID");
             int idPos = atrID.getPos();
-            //ASin: :
+            // ASin: :
             match("DOSPUNTOS");
-            //ASin: T
+            // ASin: T
             atrT = T();
 
-            //ASem: InsertarTipoTS (id.pos, T.tipo)
+            // ASem: InsertarTipoTS (id.pos, T.tipo)
             Procesador.gestorTS.setTipo(idPos, atrT.getTipo());
-            //ASem: InsertarDespTS (id.pos, despl_local)
+            // ASem: InsertarDespTS (id.pos, despl_local)
             Procesador.gestorTS.setValorAtributoEnt(idPos, "desplazamiento", despLocal);
-            //ASem:if (X.referencia) then
-            //  		{
-            //  			InsertaAtributoPasoParametrosTS (id.pos, “referencia”)
-            //  			despl_local:= despl_local + 1
-            //  		}
-            //  	else
-            //  		{
-            //  			InsertaAtributoPasoParametrosTS (id.pos, “valor”)
-            //  			despl_local:= despl_local + T.ancho
-            //  		} 
+            // ASem:if (X.referencia) then
+            // {
+            // InsertaAtributoPasoParametrosTS (id.pos, “referencia”)
+            // despl_local:= despl_local + 1
+            // }
+            // else
+            // {
+            // InsertaAtributoPasoParametrosTS (id.pos, “valor”)
+            // despl_local:= despl_local + T.ancho
+            // }
 
             if (atrX.getReferencia().equals("referencia")) {
                 despLocal += 1;
                 Procesador.gestorTS.setValorAtributoEnt(idPos, "modoParametro", 1);
 
-            } else if (atrX.getReferencia().equals("valor")) {    //valor
+            } else if (atrX.getReferencia().equals("valor")) { // valor
                 despLocal += atrT.getAncho();
                 Procesador.gestorTS.setValorAtributoEnt(idPos, "modoParametro", 0);
             }
 
-            //ASin: AA1
+            // ASin: AA1
             atrAA1 = AA();
 
-            //ASem: if (AA.tipo ≠ vacío) then 
-            //		{
-            //			A.tipo:= T.tipo x AA.tipo
-            //			A.referencia:= X.referencia x AA.referencia  // producto cartesiano de lógicos
-            //		    A.long:= AA.long + 1
-            //      } 
-            //        else 
-            //		{
-            //			A.tipo:= T.tipo
-            //			A.referencia:= X.referencia 
-            //			A.long:= 1
-            //		}
+            // ASem: if (AA.tipo ≠ vacío) then
+            // {
+            // A.tipo:= T.tipo x AA.tipo
+            // A.referencia:= X.referencia x AA.referencia // producto cartesiano de lógicos
+            // A.long:= AA.long + 1
+            // }
+            // else
+            // {
+            // A.tipo:= T.tipo
+            // A.referencia:= X.referencia
+            // A.long:= 1
+            // }
             if (atrAA1.getTipo().equals("vacío")) {
                 atrAA.setTipo(atrT.getTipo());
                 atrAA.setReferencia(atrX.getReferencia());
@@ -762,83 +858,84 @@ public class ASin {
 
         } else if (tokenActualCoincideCualquiera("PARENT_CERRAR")) {
 
-            printParse("19"); //19.	AA → λ
-            //ASem: AA.tipo = vacío
+            printParse("19"); // 19. AA → λ
+            // ASem: AA.tipo = vacío
             atrAA.setTipo("vacío");
-            //ASem: AA.long = 0
+            // ASem: AA.long = 0
             atrAA.setLong(0);
-            //ASem: AA.referencia = ""
+            // ASem: AA.referencia = ""
             atrAA.setReferencia("");
         }
         debug(atrAA);
         return atrAA;
     }
 
-    //Funcion Correspondiente al simbolo no terminal: X
-    //Acciones posibles:
-    //      	X → var
-    //          X → λ
+    // Funcion Correspondiente al simbolo no terminal: X
+    // Acciones posibles:
+    // X → var
+    // X → λ
     private static Atributos X() {
 
         Atributos atrX = new Atributos();
 
         if (tokenActualCoincideCualquiera("VAR")) {
 
-            printParse("20");       //20.	X → var
-            //ASin: var
+            printParse("20"); // 20. X → var
+            // ASin: var
             match("VAR");
-            //Asem: X.referencia:= true
+            // Asem: X.referencia:= true
             atrX.setReferencia("referencia");
 
         } else if (tokenActualCoincideCualquiera("ID")) {
 
-            printParse("21");       //21.	X → λ	
+            printParse("21"); // 21. X → λ
 
-            //Asem: X.referencia:= false
+            // Asem: X.referencia:= false
             atrX.setReferencia("valor");
         }
         debug(atrX);
         return atrX;
     }
 
-    //Funcion Correspondiente al simbolo no terminal: C 
-    //Acciones posibles:
-    //      	C → B C1
-    //          C → λ
+    // Funcion Correspondiente al simbolo no terminal: C
+    // Acciones posibles:
+    // C → B C1
+    // C → λ
     private static Atributos C() {
 
         Atributos atrC = new Atributos();
 
-        if (tokenActualCoincideCualquiera("CASE", "EXIT", "FOR", "ID", "IF", "LOOP", "READ", "REPEAT", "RETURN", "WHILE", "WRITE", "WRITELN")) {
-            printParse("22");   //22.	C → B C1
+        if (tokenActualCoincideCualquiera("CASE", "EXIT", "FOR", "ID", "IF", "LOOP", "READ", "REPEAT", "RETURN",
+                "WHILE", "WRITE", "WRITELN")) {
+            printParse("22"); // 22. C → B C1
 
-            //Asin: B
+            // Asin: B
             Atributos atrB = B();
-            //Asin: C1
+            // Asin: C1
             Atributos atrC1 = C();
 
-            //Asem: 
-            //if (B.tipo = tipo_ok){ 
-            //    C.tipo:=C1.tipo 
-            // } else{ 
-            //      C.tipo:= tipo_error 
-            // } 
+            // Asem:
+            // if (B.tipo = tipo_ok){
+            // C.tipo:=C1.tipo
+            // } else{
+            // C.tipo:= tipo_error
+            // }
             if (atrB.getTipo().equals("tipo_ok")) {
                 atrC.setTipo(atrC1.getTipo());
             } else {
                 atrC.setTipo("tipo_error");
             }
 
-            //ASem: C.exit:= B.exit + C1.exit
+            // ASem: C.exit:= B.exit + C1.exit
             atrC.setExit(atrB.getExit() + atrC1.getExit());
 
-            //ASem: C.tipoRet:=	if (B.tipoRet = C1.tipoRet)
-            //        				then B.tipoRet
-            //        			else if (B.tipoRet = tipo_ok)
-            //        				then C1.tipoRet
-            //        			else if (C1.tipoRet = tipo_ok)
-            //        				then B.tipoRet
-            //        			else tipo_error
+            // ASem: C.tipoRet:= if (B.tipoRet = C1.tipoRet)
+            // then B.tipoRet
+            // else if (B.tipoRet = tipo_ok)
+            // then C1.tipoRet
+            // else if (C1.tipoRet = tipo_ok)
+            // then B.tipoRet
+            // else tipo_error
             if (atrB.getRet().equals(atrC1.getRet())) {
                 atrC.setRet(atrB.getRet());
             } else if (atrB.getRet().equals("tipo_ok")) {
@@ -851,55 +948,56 @@ public class ASin {
 
         } else if (tokenActualCoincideCualquiera("END", "UNTIL")) {
 
-            printParse("23");   //23.	C → λ	
-            //ASem: C.tipo:= tipo_ok
+            printParse("23"); // 23. C → λ
+            // ASem: C.tipo:= tipo_ok
             atrC.setTipo("tipo_ok");
-            //ASem: C.exit:= 0
+            // ASem: C.exit:= 0
             atrC.setExit(0);
-            //ASem: C.tipoRet:= tipo_ok
+            // ASem: C.tipoRet:= tipo_ok
             atrC.setRet("tipo_ok");
         }
         debug(atrC);
         return atrC;
     }
 
-    //Funcion Correspondiente al simbolo no terminal: Bloque
-    //Acciones posibles:
-    //      	24.	Bloque → begin C end
+    // Funcion Correspondiente al simbolo no terminal: Bloque
+    // Acciones posibles:
+    // 24. Bloque → begin C end
     private static Atributos Bloque() {
 
         Atributos atrBloque = new Atributos();
         Atributos atrC;
         if (tokenActualCoincideCualquiera("BEGIN")) {
 
-            printParse("24");   //24.	Bloque → begin C end
-            //ASin: begin
+            printParse("24"); // 24. Bloque → begin C end
+            // ASin: begin
             match("BEGIN");
-            //ASin: C
+            // ASin: C
             atrC = C();
-            //ASin: end
+            // ASin: end
             match("END");
-            //ASem: Bloque.tipo:= C.tipo
+            // ASem: Bloque.tipo:= C.tipo
             atrBloque.setTipo(atrC.getTipo());
-            //ASem: Bloque.exit:= C.exit
+            // ASem: Bloque.exit:= C.exit
             atrBloque.setExit(atrC.getExit());
-            //ASem: Bloque.tipoRet:= C.tipoRet
+            // ASem: Bloque.tipoRet:= C.tipoRet
             atrBloque.setRet(atrC.getRet());
+
         }
 
         debug(atrBloque);
         return atrBloque;
     }
 
-    //Funcion Correspondiente al simbolo no terminal: B
-    //Acciones posibles:
-    //      	B → S	
-    //          B → if E then Bcola
-    //          B → while  E do Bloque ;
-    //          B → repeat C until E ;
-    //          B → loop C end ;
-    //          B → for id := E1 to E2 do Bloque ;
-    //          B → case E of N O end;
+    // Funcion Correspondiente al simbolo no terminal: B
+    // Acciones posibles:
+    // B → S
+    // B → if E then Bcola
+    // B → while E do Bloque ;
+    // B → repeat C until E ;
+    // B → loop C end ;
+    // B → for id := E1 to E2 do Bloque ;
+    // B → case E of N O end;
     private static Atributos B() {
 
         Atributos atrB = new Atributos();
@@ -915,209 +1013,223 @@ public class ASin {
 
         if (tokenActualCoincideCualquiera("EXIT", "ID", "READ", "RETURN", "WRITE", "WRITELN")) {
 
-            printParse("25");       //25.	B → S	
-            //ASin: S	
+            printParse("25"); // 25. B → S
+            // ASin: S
             atrS = S();
-            //ASem: B.tipo:= S.tipo 
+            // ASem: B.tipo:= S.tipo
             atrB.setTipo(atrS.getTipo());
-            //ASem: B.exit:= S.exit
+            // ASem: B.exit:= S.exit
             atrB.setExit(atrS.getExit());
-            //ASem: B.tipoRet:= S.tipoRet
+            // ASem: B.tipoRet:= S.tipoRet
             atrB.setRet(atrS.getRet());
 
         } else if (tokenActualCoincideCualquiera("IF")) {
 
-            printParse("26");   //26.	B → if E then Bcola	
-            //ASin: if
+            printParse("26"); // 26. B → if E then Bcola
+            // ASin: if
             match("IF");
-            //ASin: E
+
+            // pablo:
+            E_verdad = GenCodigoObjeto.nuevaEtiqueta();
+            E_falso = GenCodigoObjeto.nuevaEtiqueta();
+
+            // ASin: E
             atrE = E();
-            //ASin: then
+            // ASin: then
             match("THEN");
-            //Asin: Bcola
+
+            // pablo:
+            GenCodigoObjeto.emite("ETIQ", "-", "-", E_verdad);
+
+            // Asin: Bcola
             atrBcola = Bcola();
-            //ASem:
-            // if (E.tipo = lógico) { 
-            //        B.tipo:= Bcola.tipo  
-            // } else { 
-            //    B.tipo:= tipo_error  
-            // } 
+
+            // pablo: comentado porque la etiqueta E_falso pasa "hacia dentro" para
+            // implementar condicional compuesta
+            // GenCodigoObjeto.emite("ETIQ", "-", "-", E_falso);
+
+            // ASem:
+            // if (E.tipo = lógico) {
+            // B.tipo:= Bcola.tipo
+            // } else {
+            // B.tipo:= tipo_error
+            // }
             if (atrE.getTipo().equals("lógico")) {
                 atrB.setTipo(atrBcola.getTipo());
             } else {
                 atrB.setTipo("tipo_error");
             }
-            //ASem: B.exit:= Bcola.exit
+            // ASem: B.exit:= Bcola.exit
             atrB.setExit(atrBcola.getExit());
-            //ASem: B.tipoRet:= Bcola.tipoRet
+            // ASem: B.tipoRet:= Bcola.tipoRet
             atrB.setRet(atrBcola.getRet());
 
         } else if (tokenActualCoincideCualquiera("WHILE")) {
 
-            printParse("31");       //31.	B → while  E do Bloque ;	
+            printParse("31"); // 31. B → while E do Bloque ;
 
-            //ASin: while
+            // ASin: while
             match("WHILE");
-            //ASin: E
+            // ASin: E
             atrE = E();
-            //ASin: do
+            // ASin: do
             match("DO");
-            //ASin: Bloque
+            // ASin: Bloque
             atrBloque = Bloque();
-            //ASin: ;
+            // ASin: ;
             match("PYC");
-            //ASem: 
+            // ASem:
             // if (E.tipo = lógico) {
-            //        B.tipo:= Bloque.tipo  
-            // } else { 
-            //    B.tipo:= tipo_error  
-            // }    
+            // B.tipo:= Bloque.tipo
+            // } else {
+            // B.tipo:= tipo_error
+            // }
             if (atrE.getTipo().equals("lógico")) {
                 atrB.setTipo(atrBloque.getTipo());
             } else {
                 atrB.setTipo("tipo_error");
             }
-            //ASem: B.exit:= Bloque.exit
+            // ASem: B.exit:= Bloque.exit
             atrB.setExit(atrBloque.getExit());
-            //ASem: B.tipoRet:= Bloque.tipoRet
+            // ASem: B.tipoRet:= Bloque.tipoRet
             atrB.setRet(atrBloque.getRet());
 
         } else if (tokenActualCoincideCualquiera("REPEAT")) {
 
-            printParse("32");   //32.	B → repeat C until E ;
-            //ASin: repeat
+            printParse("32"); // 32. B → repeat C until E ;
+            // ASin: repeat
             match("REPEAT");
-            //ASin: C
+            // ASin: C
             atrC = C();
-            //ASin: until
+            // ASin: until
             match("UNTIL");
-            //ASin: E
+            // ASin: E
             atrE = E();
-            //ASin: ;
+            // ASin: ;
             match("PYC");
 
-            //ASem: 
+            // ASem:
             // if (E.tipo = lógico) {
-            //        B.tipo:= C.tipo  
-            // } else { 
-            //    B.tipo:= tipo_error  
+            // B.tipo:= C.tipo
+            // } else {
+            // B.tipo:= tipo_error
             // }
             if (atrE.getTipo().equals("lógico")) {
                 atrB.setTipo(atrC.getTipo());
             } else {
                 atrB.setTipo("tipo_error");
             }
-            //ASem: B.exit:= C.exit
+            // ASem: B.exit:= C.exit
             atrB.setExit(atrC.getExit());
-            //ASem: B.tipoRet:= C.tipoRet
+            // ASem: B.tipoRet:= C.tipoRet
             atrB.setRet(atrC.getRet());
 
         } else if (tokenActualCoincideCualquiera("LOOP")) {
 
-            printParse("33");       //33.	B → loop C end ;
+            printParse("33"); // 33. B → loop C end ;
 
-            //ASin: loop
+            // ASin: loop
             match("LOOP");
-            //ASin: C
+            // ASin: C
             atrC = C();
-            //ASin: end
+            // ASin: end
             match("END");
-            //ASin: ;
+            // ASin: ;
             match("PYC");
-            //ASem: if (C.exit ≠ 1) 
-            //			then Error (“dentro de loop debe haber 1 y solo 1 exit”)
+            // ASem: if (C.exit ≠ 1)
+            // then Error (“dentro de loop debe haber 1 y solo 1 exit”)
             if (atrC.getExit() > 1) {
                 GestorError.writeError("semántico", "Dentro de un LOOP no debe haber más de un EXIT");
             } else if (atrC.getExit() < 1) {
                 GestorError.writeError("semántico", "Dentro de un LOOP debe haber un EXIT");
             }
 
-            //ASem: B.tipo:= C.tipo
+            // ASem: B.tipo:= C.tipo
             atrB.setTipo(atrC.getTipo());
-            //ASem: B.exit := 0
+            // ASem: B.exit := 0
             atrB.setExit(0);
-            //ASem: B.tipoRet := C.tipoRet
+            // ASem: B.tipoRet := C.tipoRet
             atrB.setRet(atrC.getRet());
 
         } else if (tokenActualCoincideCualquiera("FOR")) {
             Atributos atrID;
 
-            printParse("34");   //34.	B → for id := E1 to E2 do Bloque ;	
+            printParse("34"); // 34. B → for id := E1 to E2 do Bloque ;
 
-            //ASin: for
+            // ASin: for
             match("FOR");
-            //ASin: id
+            // ASin: id
             atrID = match("ID");
             int idPos = atrID.getPos();
-            //ASin: :=
+            // ASin: :=
             match("ASIGNACION");
-            //ASin: E1
+            // ASin: E1
             atrE1 = E();
-            //ASin: to
+            // ASin: to
             match("TO");
-            //ASin: E2
+            // ASin: E2
             atrE2 = E();
-            //ASin: do
+            // ASin: do
             match("DO");
-            //ASin: Bloque
+            // ASin: Bloque
             atrBloque = Bloque();
-            //ASin: ;
+            // ASin: ;
             match("PYC");
-            //ASem: 
-            // if (E1.tipo = entero AND E2.tipo = entero AND TSActual[id].tipo = entero) 
-            //			B.tipo:= Bloque.tipo
-            //  else
-            //          B.tipo:= tipo_error
+            // ASem:
+            // if (E1.tipo = entero AND E2.tipo = entero AND TSActual[id].tipo = entero)
+            // B.tipo:= Bloque.tipo
+            // else
+            // B.tipo:= tipo_error
             if (atrE1.getTipo().equals("entero") && atrE2.getTipo().equals("entero")
                     && Procesador.gestorTS.getTipo(idPos).equals("entero")) {
                 atrB.setTipo(atrBloque.getTipo());
             } else {
                 atrB.setTipo("tipo_error");
             }
-            //ASem: B.exit:= Bloque.exit
+            // ASem: B.exit:= Bloque.exit
             atrB.setExit(atrBloque.getExit());
-            //ASem: B.tipoRet:= Bloque.tipoRet
+            // ASem: B.tipoRet:= Bloque.tipoRet
             atrB.setRet(atrBloque.getRet());
         } else if (tokenActualCoincideCualquiera("CASE")) {
 
-            printParse("35");       //35.	B → case E of N O end;
+            printParse("35"); // 35. B → case E of N O end;
 
-            //ASin: case
+            // ASin: case
             match("CASE");
-            //ASin: E
+            // ASin: E
             atrE = E();
-            //ASin: of
+            // ASin: of
             match("OF");
-            //ASin: N
+            // ASin: N
             atrN = N();
-            //ASin: O
+            // ASin: O
             atrO = O();
-            //ASin: end
+            // ASin: end
             match("END");
-            //ASin: ;
+            // ASin: ;
             match("PYC");
-            //ASem: 
-            // if (E.tipo = entero AND N.tipo = O.tipo = tipo_ok) 
-            //     B.tipo:= tipo_ok 
-            //   else  
-            //     B.tipo:= tipo_error 
+            // ASem:
+            // if (E.tipo = entero AND N.tipo = O.tipo = tipo_ok)
+            // B.tipo:= tipo_ok
+            // else
+            // B.tipo:= tipo_error
             if (atrE.getTipo().equals("entero") && atrN.getTipo().equals("tipo_ok")
                     && atrO.getTipo().equals("tipo_ok")) {
                 atrB.setTipo("tipo_ok");
             } else {
                 atrB.setTipo("tipo_error");
             }
-            //ASem: B.exit:= N.exit + O.exit
+            // ASem: B.exit:= N.exit + O.exit
             atrB.setExit(atrN.getExit() + atrO.getExit());
-            //ASem: 
-            // if (N.tipoRet = O.tipoRet) 
-            //     B.tipoRet:= N.tipoRet 
-            // else if (N.tipoRet = tipo_ok) 
-            //     B.tipoRet:= O.tipoRet 
-            // else if (O.tipoRet = tipo_ok) 
-            //     B.tipoRet:= N.tipoRet 
-            // else  
-            //     B.tipoRet:= tipo_error 
+            // ASem:
+            // if (N.tipoRet = O.tipoRet)
+            // B.tipoRet:= N.tipoRet
+            // else if (N.tipoRet = tipo_ok)
+            // B.tipoRet:= O.tipoRet
+            // else if (O.tipoRet = tipo_ok)
+            // B.tipoRet:= N.tipoRet
+            // else
+            // B.tipoRet:= tipo_error
 
             if (atrN.getRet().equals(atrO.getRet())) {
                 atrB.setRet(atrN.getRet());
@@ -1133,10 +1245,10 @@ public class ASin {
         return atrB;
     }
 
-    //Funcion Correspondiente al simbolo no terminal: Bcola
-    //Acciones posibles:
-    //      	Bcola → S
-    //          Bcola → Bloque ; BlqElse
+    // Funcion Correspondiente al simbolo no terminal: Bcola
+    // Acciones posibles:
+    // Bcola → S
+    // Bcola → Bloque ; BlqElse
     private static Atributos Bcola() {
 
         Atributos atrBcola = new Atributos();
@@ -1145,45 +1257,57 @@ public class ASin {
         Atributos atrBlqElse;
         if (tokenActualCoincideCualquiera("EXIT", "ID", "READ", "RETURN", "WRITE", "WRITELN")) {
 
-            printParse("27");   //27.	Bcola → S	
-            //ASin: S
+            printParse("27"); // 27. Bcola → S
+            // ASin: S
             atrS = S();
-            //ASem: B.tipo = S.tipo
+            // ASem: B.tipo = S.tipo
             atrBcola.setTipo(atrS.getTipo());
-            //ASem: B.exit = S.exit
+            // ASem: B.exit = S.exit
             atrBcola.setExit(atrS.getExit());
-            //ASem: B.tipoRet = S.tipoRet
+            // ASem: B.tipoRet = S.tipoRet
             atrBcola.setRet(atrS.getRet());
 
         } else if (tokenActualCoincideCualquiera("BEGIN")) {
 
-            printParse("28");       //28.	Bcola → Bloque ; BlqElse	
-            //ASin: Bloque
+            printParse("28"); // 28. Bcola → Bloque ; BlqElse
+
+            Bcola_siguiente = GenCodigoObjeto.nuevaEtiqueta();
+
+            // ASin: Bloque
             atrBloque = Bloque();
-            //ASin: ;
+            // ASin: ;
             match("PYC");
-            //ASin: BlqElse
+
+            // pablo
+            GenCodigoObjeto.emite("GOTO", "-", "-", Bcola_siguiente);
+            GenCodigoObjeto.emite("ETIQ", "-", "-", E_falso);
+
+            // ASin: BlqElse
             atrBlqElse = BlqElse();
-            //ASem: 
-            // if(Bloque.tipo = tipo_ok) { 
-            //     Bcola.tipo:= BlqElse.tipo 
-            //    } else { 
-            //     Bcola.tipo:= tipo_error 
-            //   } 
+
+            // pablo
+            GenCodigoObjeto.emite("ETIQ", "-", "-", Bcola_siguiente);
+
+            // ASem:
+            // if(Bloque.tipo = tipo_ok) {
+            // Bcola.tipo:= BlqElse.tipo
+            // } else {
+            // Bcola.tipo:= tipo_error
+            // }
             if (atrBloque.getTipo().equals("tipo_ok")) {
                 atrBcola.setTipo(atrBlqElse.getTipo());
             } else {
                 atrBcola.setTipo("tipo_error");
             }
-            //  ASem: Bcola.exit:= Bloque.exit + BlqElse.exit
+            // ASem: Bcola.exit:= Bloque.exit + BlqElse.exit
             atrBcola.setExit(atrBloque.getExit() + atrBlqElse.getExit());
-            //ASem: Bcola.tipoRet:=	if (Bloque.tipoRet = BlqElse.tipoRet)
-            //                          then Bloque.tipoRet
-            //                      else if (Bloque.tipoRet = tipo_ok)
-            //                          then BlqElse.tipoRet
-            //                      else if (BlqElse.tipoRet = tipo_ok)
-            //                          then Bloque.tipoRet
-            //                      else tipo_error
+            // ASem: Bcola.tipoRet:= if (Bloque.tipoRet = BlqElse.tipoRet)
+            // then Bloque.tipoRet
+            // else if (Bloque.tipoRet = tipo_ok)
+            // then BlqElse.tipoRet
+            // else if (BlqElse.tipoRet = tipo_ok)
+            // then Bloque.tipoRet
+            // else tipo_error
             if (atrBloque.getRet().equals(atrBlqElse.getRet())) {
                 atrBcola.setRet(atrBloque.getRet());
             } else if (atrBloque.getRet().equals("tipo_ok")) {
@@ -1200,10 +1324,10 @@ public class ASin {
         return atrBcola;
     }
 
-    //Funcion Correspondiente al simbolo no terminal: BlqElse
-    //Acciones posibles:
-    //      	BlqElse → else Bloque ;
-    //          BlqElse → λ
+    // Funcion Correspondiente al simbolo no terminal: BlqElse
+    // Acciones posibles:
+    // BlqElse → else Bloque ;
+    // BlqElse → λ
     private static Atributos BlqElse() {
 
         Atributos atrBlqElse = new Atributos();
@@ -1211,30 +1335,34 @@ public class ASin {
 
         if (tokenActualCoincideCualquiera("ELSE")) {
 
-            printParse("29");   //29.	BlqElse → else Bloque ;	
+            printParse("29"); // 29. BlqElse → else Bloque ;
 
-            //ASin: else
+            // pablo
+            // GenCodigoObjeto.emite("ETIQ", "-", "-", E_falso);
+
+            // ASin: else
             match("ELSE");
-            //ASin: Bloque
+            // ASin: Bloque
             atrBloque = Bloque();
-            //ASin: ;
+            // ASin: ;
             match("PYC");
-            //ASem:	BlqElse.tipo = Bloque.tipo
+            // ASem: BlqElse.tipo = Bloque.tipo
             atrBlqElse.setTipo(atrBloque.getTipo());
-            //ASem:	BlqElse.exit = Bloque.exit
+            // ASem: BlqElse.exit = Bloque.exit
             atrBlqElse.setExit(atrBloque.getExit());
-            //ASem:	BlqElse.tipoRet = Bloque.tipoRet
+            // ASem: BlqElse.tipoRet = Bloque.tipoRet
             atrBlqElse.setRet(atrBloque.getRet());
 
-        } else if ((tokenActualCoincideCualquiera("CASE", "END", "EXIT", "FOR", "ID", "IF", "LOOP", "READ", "REPEAT", "RETURN", "UNTIL", "WHILE", "WRITE", "WRITELN"))) {
+        } else if ((tokenActualCoincideCualquiera("CASE", "END", "EXIT", "FOR", "ID", "IF", "LOOP", "READ", "REPEAT",
+                "RETURN", "UNTIL", "WHILE", "WRITE", "WRITELN"))) {
 
-            printParse("30");       //30.	BlqElse → λ 	
+            printParse("30"); // 30. BlqElse → λ
 
-            //ASem: BlqElse.tipo = tipo_ok
+            // ASem: BlqElse.tipo = tipo_ok
             atrBlqElse.setTipo("tipo_ok");
-            //ASem: BlqElse.exit = 0
+            // ASem: BlqElse.exit = 0
             atrBlqElse.setExit(0);
-            //ASem: BlqElse.tipoRet = tipo_ok
+            // ASem: BlqElse.tipoRet = tipo_ok
             atrBlqElse.setRet("tipo_ok");
         }
         debug(atrBlqElse);
@@ -1242,10 +1370,10 @@ public class ASin {
 
     }
 
-    //Funcion Correspondiente al simbolo no terminal: N
-    //Acciones posibles:
-    //      	N → entero : Bloque ; N1
-    //          N → λ
+    // Funcion Correspondiente al simbolo no terminal: N
+    // Acciones posibles:
+    // N → entero : Bloque ; N1
+    // N → λ
     private static Atributos N() {
 
         Atributos atrN = new Atributos();
@@ -1254,34 +1382,34 @@ public class ASin {
 
         if (tokenActualCoincideCualquiera("ENTERO")) {
 
-            printParse("36");     //36.	N → entero : Bloque ; N1
-            //ASin: entero
+            printParse("36"); // 36. N → entero : Bloque ; N1
+            // ASin: entero
             match("ENTERO");
-            //ASin: :
+            // ASin: :
             match("DOSPUNTOS");
-            //ASin: Bloque
+            // ASin: Bloque
             atrBloque = Bloque();
-            //ASin: ;
+            // ASin: ;
             match("PYC");
-            //ASin: N1
+            // ASin: N1
             atrN1 = N();
-            //ASem: N.tipo:=	if (N1.tipo = tipo_ok)
-            //						then Bloque.tipo
-            //					else tipo_error
+            // ASem: N.tipo:= if (N1.tipo = tipo_ok)
+            // then Bloque.tipo
+            // else tipo_error
             if (atrN1.getTipo().equals("tipo_ok")) {
                 atrN.setTipo(atrBloque.getTipo());
             } else {
                 atrN.setTipo("tipo_error");
             }
-            //ASem: N.exit:= Bloque.exit + N1.exit
+            // ASem: N.exit:= Bloque.exit + N1.exit
             atrN.setExit(atrBloque.getExit() + atrN1.getExit());
-            //ASem: N.tipoRet:=	if (Bloque.tipoRet = N1.tipoRet)
-            //                  	then Bloque.tipoRet
-            //					else if (Bloque.tipoRet = tipo_ok)
-            //						then N1.tipoRet
-            //					else if (N1.tipoRet = tipo_ok)
-            //						then Bloque.tipoRet
-            //					else tipo_error
+            // ASem: N.tipoRet:= if (Bloque.tipoRet = N1.tipoRet)
+            // then Bloque.tipoRet
+            // else if (Bloque.tipoRet = tipo_ok)
+            // then N1.tipoRet
+            // else if (N1.tipoRet = tipo_ok)
+            // then Bloque.tipoRet
+            // else tipo_error
             if (atrBloque.getRet().equals(atrN1.getRet())) {
                 atrN.setRet(atrBloque.getRet());
             } else if (atrBloque.getRet().equals("tipo_ok")) {
@@ -1294,22 +1422,22 @@ public class ASin {
 
         } else if (tokenActualCoincideCualquiera("END", "OTHERWISE")) {
 
-            printParse("37");       //37.	N → λ	
-            //Asem: N.tipo = tipo_ok
+            printParse("37"); // 37. N → λ
+            // Asem: N.tipo = tipo_ok
             atrN.setTipo("tipo_ok");
-            //ASem: N.exit = 0
+            // ASem: N.exit = 0
             atrN.setExit(0);
-            //ASem: N.tipoRet = tipo_ok
+            // ASem: N.tipoRet = tipo_ok
             atrN.setRet("tipo_ok");
         }
         debug(atrN);
         return atrN;
     }
 
-    //Funcion Correspondiente al simbolo no terminal: O
-    //Acciones posibles:
-    //      	O → otherwise : Bloque ;
-    //          O → λ
+    // Funcion Correspondiente al simbolo no terminal: O
+    // Acciones posibles:
+    // O → otherwise : Bloque ;
+    // O → λ
     private static Atributos O() {
 
         Atributos atrO = new Atributos();
@@ -1317,31 +1445,31 @@ public class ASin {
 
         if (tokenActualCoincideCualquiera("OTHERWISE")) {
 
-            printParse("38");       //38.	O → otherwise : Bloque ;		
+            printParse("38"); // 38. O → otherwise : Bloque ;
 
-            //ASin: otherwise
+            // ASin: otherwise
             match("OTHERWISE");
-            //ASin: :
+            // ASin: :
             match("DOSPUNTOS");
-            //ASin: Bloque
+            // ASin: Bloque
             atrBloque = Bloque();
-            //ASin: ;
+            // ASin: ;
             match("PYC");
-            //ASem:	O.tipo = Bloque.tipo
+            // ASem: O.tipo = Bloque.tipo
             atrO.setTipo(atrBloque.getTipo());
-            //ASem:	O.exit = Bloque.exit
+            // ASem: O.exit = Bloque.exit
             atrO.setExit(atrBloque.getExit());
-            //ASem:	O.tipoRet = Bloque.tipoRet
+            // ASem: O.tipoRet = Bloque.tipoRet
             atrO.setRet(atrBloque.getRet());
 
         } else if (tokenActualCoincideCualquiera("END")) {
 
-            printParse("39");       //39.	O → λ	 
-            //ASem:	O.tipo = tipo_ok
+            printParse("39"); // 39. O → λ
+            // ASem: O.tipo = tipo_ok
             atrO.setTipo("tipo_ok");
-            //ASem:	O.exit = 0
+            // ASem: O.exit = 0
             atrO.setExit(0);
-            //ASem:	O.tipoRet = tipo_ok
+            // ASem: O.tipoRet = tipo_ok
             atrO.setRet("tipo_ok");
         }
         debug(atrO);
@@ -1349,14 +1477,14 @@ public class ASin {
 
     }
 
-    //Funcion Correspondiente al simbolo no terminal: S
-    //Acciones posibles:
-    //      	S → write LL ;
-    //          S → writeln LL ;
-    //          S → read ( V ) ;
-    //          S → id Scola
-    //          S → return Y ;
-    //          S → exit when E ;
+    // Funcion Correspondiente al simbolo no terminal: S
+    // Acciones posibles:
+    // S → write LL ;
+    // S → writeln LL ;
+    // S → read ( V ) ;
+    // S → id Scola
+    // S → return Y ;
+    // S → exit when E ;
     private static Atributos S() {
 
         Atributos atrS = new Atributos();
@@ -1368,24 +1496,24 @@ public class ASin {
 
         if (tokenActualCoincideCualquiera("WRITE")) {
 
-            printParse("40"); //40.	S → write LL ;
+            printParse("40"); // 40. S → write LL ;
 
-            //ASin: write
+            // ASin: write
             match("WRITE");
-            //ASin: LL
+            // ASin: LL
             atrLL = LL();
-            //ASin: ;
+            // ASin: ;
             match("PYC");
 
-            //ASem: S.tipo:= tipo_ok
+            // ASem: S.tipo:= tipo_ok
             atrS.setTipo("tipo_ok");
 
-            //ASem: if (LL.tipo ≠ vacío) then
-            //		{
-            //			for i:= 1 to LL.long
-            //				if (LL.tipo[i] ≠ entero AND LL.tipo[i] ≠ cadena)
-            //					then S.tipo:= tipo_error
-            //		}
+            // ASem: if (LL.tipo ≠ vacío) then
+            // {
+            // for i:= 1 to LL.long
+            // if (LL.tipo[i] ≠ entero AND LL.tipo[i] ≠ cadena)
+            // then S.tipo:= tipo_error
+            // }
             if (!atrLL.getTipo().equals("vacío")) {
                 String[] lista = atrLL.getTipo().split(" ");
                 for (String item : lista) {
@@ -1398,30 +1526,30 @@ public class ASin {
                 GestorError.writeError("semántico", "Error en los argumentos de WRITE");
 
             }
-            //ASem:	S.exit:= 0
+            // ASem: S.exit:= 0
             atrS.setExit(0);
-            //ASem: S.tipoRet:= tipo_ok
+            // ASem: S.tipoRet:= tipo_ok
             atrS.setRet("tipo_ok");
 
         } else if (tokenActualCoincideCualquiera("WRITELN")) {
 
-            printParse("41");  //41.	S → writeln LL ;
+            printParse("41"); // 41. S → writeln LL ;
 
-            //ASin: writeln
+            // ASin: writeln
             match("WRITELN");
-            //ASin: LL
+            // ASin: LL
             atrLL = LL();
-            //ASin: ;
+            // ASin: ;
             match("PYC");
-            //ASem: S.tipo:= tipo_ok
+            // ASem: S.tipo:= tipo_ok
             atrS.setTipo("tipo_ok");
 
-            //ASem: if (LL.tipo ≠ vacío) then
-            //		{
-            //			for i:= 1 to LL.long
-            //				if (LL.tipo[i] ≠ entero AND LL.tipo[i] ≠ cadena)
-            //					then S.tipo:= tipo_error
-            //		}
+            // ASem: if (LL.tipo ≠ vacío) then
+            // {
+            // for i:= 1 to LL.long
+            // if (LL.tipo[i] ≠ entero AND LL.tipo[i] ≠ cadena)
+            // then S.tipo:= tipo_error
+            // }
             if (!atrLL.getTipo().equals("vacío")) {
                 String[] lista = atrLL.getTipo().split(" ");
                 for (String item : lista) {
@@ -1435,35 +1563,35 @@ public class ASin {
                 GestorError.writeError("semántico", "Error en los argumentos de WRITELN");
 
             }
-            //ASem:	S.exit:= 0
+            // ASem: S.exit:= 0
             atrS.setExit(0);
-            //ASem: S.tipoRet:= tipo_ok
+            // ASem: S.tipoRet:= tipo_ok
             atrS.setRet("tipo_ok");
 
         } else if (tokenActualCoincideCualquiera("READ")) {
 
-            printParse("42"); //42.	S → read ( V ) ;
+            printParse("42"); // 42. S → read ( V ) ;
 
-            //ASin: read
+            // ASin: read
             match("READ");
-            //ASin: (
+            // ASin: (
             match("PARENT_ABRIR");
-            //ASin: V
+            // ASin: V
             atrV = V();
-            //ASin: )
+            // ASin: )
             match("PARENT_CERRAR");
-            //ASin: ;
+            // ASin: ;
             match("PYC");
 
-            //ASem: S.tipo:= tipo_ok
+            // ASem: S.tipo:= tipo_ok
             atrS.setTipo("tipo_ok");
 
-            //ASem: if (V.tipo ≠ vacío) then
-            //		{
-            //			for i:= 1 to V.long
-            //				if (V.tipo[i] ≠ entero AND V.tipo[i] ≠ cadena)
-            //					then S.tipo:= tipo_error
-            //		}
+            // ASem: if (V.tipo ≠ vacío) then
+            // {
+            // for i:= 1 to V.long
+            // if (V.tipo[i] ≠ entero AND V.tipo[i] ≠ cadena)
+            // then S.tipo:= tipo_error
+            // }
             if (!atrV.getTipo().equals("vacío")) {
                 String[] lista = atrV.getTipo().split(" ");
                 for (String item : lista) {
@@ -1478,64 +1606,90 @@ public class ASin {
                 GestorError.writeError("semántico", "Error en los argumentos de READ");
 
             }
-            //ASem:	S.exit:= 0
+            // ASem: S.exit:= 0
             atrS.setExit(0);
-            //ASem: S.tipoRet:= tipo_ok
+            // ASem: S.tipoRet:= tipo_ok
             atrS.setRet("tipo_ok");
 
         } else if (tokenActualCoincideCualquiera("ID")) {
             Atributos atrId;
 
-            printParse("43"); //43.	S → id Scola
+            printParse("43"); // 43. S → id Scola
 
-            //ASin: id
+            // ASin: id
             atrId = match("ID");
             int idPos = atrId.getPos();
-            //ASin: Scola
+            // ASin: Scola
             atrScola = Scola();
-            //ASem : id.tipo:= BuscaTipoTS (id.pos) 
+            // ASem : id.tipo:= BuscaTipoTS (id.pos)
             atrId.setTipo(Procesador.gestorTS.getTipo(idPos));
-            //ASem: S.tipo:=	if (id.tipo = Scola.tipo)
-            //                        then tipo_ok
-            //                    else if (id.tipo = Scola.tipo→vacío)
-            //                        then tipo_ok
-            //                    else tipo_error 
+            // ASem: S.tipo:= if (id.tipo = Scola.tipo)
+            // then tipo_ok
+            // else if (id.tipo = Scola.tipo→vacío)
+            // then tipo_ok
+            // else tipo_error
+
+            // pablo:atrID
+            if (atrScola.getAsig()) { // en principio solo un entero (falta implementar cadenas)
+                String dirDestino = obtenerDireccion(idPos);
+                if (atrScola.getPos() == 0) { // entero: p.e x := 5;
+                    GenCodigoObjeto.emite("ASIG", "#" + String.valueOf(atrScola.getVal()), "1", dirDestino);
+                } else { // identificador: p.e x := y;
+                    String dirFuente = obtenerDireccion(atrScola.getPos());
+                    GenCodigoObjeto.emite("ASIG", dirFuente, "2", dirDestino);
+                }
+            } else { // procedimiento
+                GenCodigoObjeto.emite("CALL", atrId.getEtiqueta(), "-", "-");
+
+            }
 
             String idEtiq = "";
             if (atrId.getTipo().equals("procedimiento")) {
                 idEtiq = Procesador.gestorTS.getValorAtributoCad(idPos, "etiqueta");
             }
 
-            if (atrId.getTipo().equals(atrScola.getTipo()) && atrScola.getAsig() && !atrId.getTipo().equals("procedimiento")) {    //es asignacion y son iguales int-int
+            if (atrId.getTipo().equals(atrScola.getTipo()) && atrScola.getAsig()
+                    && !atrId.getTipo().equals("procedimiento")) { // es asignacion y son iguales int-int
                 atrS.setTipo("tipo_ok");
-            } else if (atrId.getTipo().equals("procedimiento") && !atrScola.getAsig() && !idEtiq.equals("main")) {    //es llamada a procedimiento y no es MAIN 
+            } else if (atrId.getTipo().equals("procedimiento") && !atrScola.getAsig() && !idEtiq.equals("main")) { // es
+                                                                                                                   // llamada
+                                                                                                                   // a
+                                                                                                                   // procedimiento
+                                                                                                                   // y
+                                                                                                                   // no
+                                                                                                                   // es
+                                                                                                                   // MAIN
                 int numParam = Procesador.gestorTS.getValorAtributoEnt(idPos, "numParametro");
                 if (numParam > 0) {
                     String[] sColaAtributos = atrScola.getTipo().split(" ");
                     String[] idAtbAtributos = Procesador.gestorTS.getValorAtributoLista(idPos, "tipoParametros");
-                    if (sColaAtributos.length == idAtbAtributos.length && Arrays.compare(sColaAtributos, idAtbAtributos) == 0) {
+                    if (sColaAtributos.length == idAtbAtributos.length
+                            && Arrays.compare(sColaAtributos, idAtbAtributos) == 0) {
                         atrS.setTipo("tipo_ok");
                     } else {
-                        GestorError.writeError("semántico", "Los parámetros del PROCEDURE no coinciden.\n \t Se ha recibido: "
-                                + Arrays.toString(sColaAtributos) + "\n \t y se esperaba: " + Arrays.toString(idAtbAtributos));
+                        GestorError.writeError("semántico",
+                                "Los parámetros del PROCEDURE no coinciden.\n \t Se ha recibido: "
+                                        + Arrays.toString(sColaAtributos) + "\n \t y se esperaba: "
+                                        + Arrays.toString(idAtbAtributos));
                         atrS.setTipo("tipo_error");
                     }
                 } else if (numParam == 0 && !atrScola.getAsig()) {
                     String[] sColaAtributos = atrScola.getTipo().split(" ");
 
-                    GestorError.writeError("semántico", "Los parámetros del PROCEDURE no coinciden" + "\n \t Se ha recibido: "
-                            + Arrays.toString(sColaAtributos) + "\n \t pero el PROCEDURE no tiene parámetros ");
+                    GestorError.writeError("semántico",
+                            "Los parámetros del PROCEDURE no coinciden" + "\n \t Se ha recibido: "
+                                    + Arrays.toString(sColaAtributos) + "\n \t pero el PROCEDURE no tiene parámetros ");
                     atrS.setTipo("tipo_error");
                 } else {
                     atrS.setTipo("tipo_ok");
                 }
-            } else if (idEtiq.equals("main")) {      // llamada a programa principal
+            } else if (idEtiq.equals("main")) { // llamada a programa principal
                 GestorError.writeError("semántico", "No se puede realizar una llamada al programa principal");
                 atrS.setTipo("tipo_error");
             } else if (atrId.getTipo().equals("procedimiento") && atrScola.getAsig()) {
                 GestorError.writeError("semántico", "Se está realizando una asignación a un PROCEDURE");
                 atrS.setTipo("tipo_error");
-            } else if (Procesador.gestorTS.getTipo(idPos).equals("función")) {     //llamada a una funcion
+            } else if (Procesador.gestorTS.getTipo(idPos).equals("función")) { // llamada a una funcion
                 atrS.setTipo("tipo_error");
                 GestorError.writeError("semántico", "Una funcíón no puede ser llamada como sentencia");
             } else {
@@ -1550,69 +1704,69 @@ public class ASin {
             atrS.setExit(0);
             atrS.setRet("tipo_ok");
 
-            //S.exit:= 0
+            // S.exit:= 0
             atrS.setExit(0);
-            //S.tipoRet:= tipo_ok
+            // S.tipoRet:= tipo_ok
             atrS.setRet("tipo_ok");
 
         } else if (tokenActualCoincideCualquiera("RETURN")) {
 
-            printParse("46"); //46.	S → return Y ;
+            printParse("46"); // 46. S → return Y ;
 
-            //ASin: return
+            // ASin: return
             match("RETURN");
-            //ASin: Y
+            // ASin: Y
             atrY = Y();
-            //ASin: ;
+            // ASin: ;
             match("PYC");
-            //ASem: S.tipo:=	if (Y.tipo ≠ tipo _error)
-            //        				then tipo_ok
-            //        			else tipo_error 
+            // ASem: S.tipo:= if (Y.tipo ≠ tipo _error)
+            // then tipo_ok
+            // else tipo_error
             if (!atrY.getTipo().equals("tipo_error")) {
                 atrS.setTipo("tipo_ok");
             } else {
                 atrS.setTipo("tipo_error");
 
             }
-            //ASem: S.exit:= 0
+            // ASem: S.exit:= 0
             atrS.setExit(0);
-            //ASem: S.tipoRet:= Y.tipo
+            // ASem: S.tipoRet:= Y.tipo
             atrS.setRet(atrY.getTipo());
 
         } else if (tokenActualCoincideCualquiera("EXIT")) {
 
-            printParse("47"); //47.	S → exit when E ;
+            printParse("47"); // 47. S → exit when E ;
 
-            //ASin: exit
+            // ASin: exit
             match("EXIT");
-            //ASin: when
+            // ASin: when
             match("WHEN");
-            //ASin: E
+            // ASin: E
             atrE = E();
-            //ASin: ;
+            // ASin: ;
             match("PYC");
-            //ASem: S.tipo:=	if (E.tipo = lógico)
-            //                        then tipo_ok
-            //                    else tipo_error
+            // ASem: S.tipo:= if (E.tipo = lógico)
+            // then tipo_ok
+            // else tipo_error
             if (atrE.getTipo().equals("lógico")) {
                 atrS.setTipo("tipo_ok");
             } else {
                 atrS.setTipo("tipo_error");
             }
-            //ASem: S.exit:= 1
+            // ASem: S.exit:= 1
             atrS.setExit(1);
-            //ASem: S.tipoRet:= tipo_ok
+            // ASem: S.tipoRet:= tipo_ok
             atrS.setRet("tipo_ok");
         }
 
         debug(atrS);
         return atrS;
     }
-    //Funcion Correspondiente al simbolo no terminal: Scola
-    //Acciones posibles:
+    // Funcion Correspondiente al simbolo no terminal: Scola
+    // Acciones posibles:
 
-    //      	Scola → := E ;
-    //          Scola → LL ;
+    // Scola → := E ;
+    // Scola → LL ;
     private static Atributos Scola() {
 
         Atributos atrScola = new Atributos();
@@ -1621,101 +1775,110 @@ public class ASin {
 
         if (tokenActualCoincideCualquiera("ASIGNACION")) {
 
-            printParse("44"); //44.	Scola → := E ;
+            printParse("44"); // 44. Scola → := E ;
 
-            //ASin: :=
+            // ASin: :=
             match("ASIGNACION");
-            //ASin: E
+            // ASin: E
             atrE = E();
-            //ASin: ;
+            // ASin: ;
             match("PYC");
-            //ASem: Scola.tipo = E.tipo
+            // ASem: Scola.tipo = E.tipo
             atrScola.setTipo(atrE.getTipo());
-            //ASem: Scola.asig = true
+            // ASem: Scola.asig = true
             atrScola.setAsig(true);
+
+            // pablo:
+            atrScola.setVal(atrE.getVal());
+            atrScola.setPos(atrE.getPos());
+
+            // pablo: si E -> 4 + 3, hay que guardar el valor en una "temporal"
 
         } else if (tokenActualCoincideCualquiera("PARENT_ABRIR", "PYC")) {
 
-            printParse("45"); //45.	Scola → LL ;
+            printParse("45"); // 45. Scola → LL ;
 
-            //ASin: LL
+            // ASin: LL
             atrLL = LL();
-            //ASin: ;
+            // ASin: ;
             match("PYC");
-            //ASem: Scola.tipo = LL.tipo
+            // ASem: Scola.tipo = LL.tipo
             atrScola.setTipo(atrLL.getTipo());
-            //ASem: Scola.long = LL.long
+            // ASem: Scola.long = LL.long
             atrScola.setLong(atrLL.getLong());
-            //ASem: Scola.asig = false
+            // ASem: Scola.asig = false
             atrScola.setAsig(false);
         }
         debug(atrScola);
         return atrScola;
     }
 
-    //Funcion Correspondiente al simbolo no terminal: LL
-    //Acciones posibles:
-    //      	LL → ( L ) 
-    //          LL → λ
+    // Funcion Correspondiente al simbolo no terminal: LL
+    // Acciones posibles:
+    // LL → ( L )
+    // LL → λ
     private static Atributos LL() {
 
         Atributos atrLL = new Atributos();
         Atributos atrL;
         if (tokenActualCoincideCualquiera("PARENT_ABRIR")) {
 
-            printParse("48");   //48.	LL → ( L )  
+            printParse("48"); // 48. LL → ( L )
 
-            //ASin: (
+            // ASin: (
             match("PARENT_ABRIR");
-            //ASin: L
+            // ASin: L
             atrL = L();
-            //ASin: )
+            // ASin: )
             match("PARENT_CERRAR");
 
-            //ASem: LL.tipo = L.tipo
+            // ASem: LL.tipo = L.tipo
             atrLL.setTipo(atrL.getTipo());
-            //ASem: LL.long = L.long
+            // ASem: LL.long = L.long
             atrLL.setLong(atrL.getLong());
-        } else if (tokenActualCoincideCualquiera("PARENT_CERRAR", "PRODUCTO", "POTENCIA", "MAS", "COMA", "MENOS", "DIVISION", "PYC", "MAYOR", "MAYOR_IGUAL",
-                "MENOR", "MENOR_IGUAL", "IGUAL", "DISTINTO", "AND", "DO", "IN", "MOD", "OF", "OR", "THEN", "TO", "XOR")) {  //lambda
+        } else if (tokenActualCoincideCualquiera("PARENT_CERRAR", "PRODUCTO", "POTENCIA", "MAS", "COMA", "MENOS",
+                "DIVISION", "PYC", "MAYOR", "MAYOR_IGUAL",
+                "MENOR", "MENOR_IGUAL", "IGUAL", "DISTINTO", "AND", "DO", "IN", "MOD", "OF", "OR", "THEN", "TO",
+                "XOR")) { // lambda
 
-            printParse("49");   //49.    LL → λ
-            //Asem: LL.tipo = "vacío"
+            printParse("49"); // 49. LL → λ
+            // Asem: LL.tipo = "vacío"
             atrLL.setTipo("vacío");
-            //ASem: LL.long = 0
+            // ASem: LL.long = 0
             atrLL.setLong(0);
         }
         debug(atrLL);
         return atrLL;
     }
 
-    //Funcion Correspondiente al simbolo no terminal: L
-    //Acciones posibles:
-    //      	L → E Q
+    // Funcion Correspondiente al simbolo no terminal: L
+    // Acciones posibles:
+    // L → E Q
     private static Atributos L() {
 
         Atributos atrL = new Atributos();
         Atributos atrE;
         Atributos atrQ;
-        if (tokenActualCoincideCualquiera("PARENT_ABRIR", "MAS", "MENOS", "CADENA", "ENTERO", "FALSE", "ID", "MAX", "MIN", "NOT", "TRUE")) {
+        if (tokenActualCoincideCualquiera("PARENT_ABRIR", "MAS", "MENOS", "CADENA", "ENTERO", "FALSE", "ID", "MAX",
+                "MIN", "NOT", "TRUE")) {
 
-            printParse("50"); //50.	L → E Q
-            //ASin: E
+            printParse("50"); // 50. L → E Q
+            // ASin: E
             atrE = E();
-            //ASin: Q
+            // ASin: Q
             atrQ = Q();
-            //ASem:
-            // if (Q.tipo = vacío) 
-            //     L.tipo:= E.tipo 
-            // else 
-            //     L.tipo:= E.tipo x Q.tipo 
+            // ASem:
+            // if (Q.tipo = vacío)
+            // L.tipo:= E.tipo
+            // else
+            // L.tipo:= E.tipo x Q.tipo
 
             if (atrQ.getTipo().equals("vacío")) {
                 atrL.setTipo(atrE.getTipo());
             } else {
                 atrL.setTipo(atrE.getTipo() + " " + atrQ.getTipo());
             }
-            //ASem: L.long:= 1 + Q.long
+            // ASem: L.long:= 1 + Q.long
             atrL.setLong(atrQ.getLong() + 1);
 
         }
@@ -1723,10 +1886,10 @@ public class ASin {
         return atrL;
     }
 
-    //Funcion Correspondiente al simbolo no terminal: Q
-    //Acciones posibles:
-    //      	Q → , E Q
-    //          Q → λ
+    // Funcion Correspondiente al simbolo no terminal: Q
+    // Acciones posibles:
+    // Q → , E Q
+    // Q → λ
     private static Atributos Q() {
 
         Atributos atrQ = new Atributos();
@@ -1734,33 +1897,33 @@ public class ASin {
         Atributos atrQ1;
         if (tokenActualCoincideCualquiera("COMA")) {
 
-            printParse("51");   //51.	Q → , E Q1
-            //ASin: ,
+            printParse("51"); // 51. Q → , E Q1
+            // ASin: ,
             match("COMA");
-            //ASin: E
+            // ASin: E
             atrE = E();
-            //ASin: Q
+            // ASin: Q
             atrQ1 = Q();
-            //ASem:
-            //  if (Q1.tipo = vacío)  
-            //      Q.tipo:= E.tipo 
-            //  else 
-            //      Q.tipo:= E.tipo x Q1.tipo 
+            // ASem:
+            // if (Q1.tipo = vacío)
+            // Q.tipo:= E.tipo
+            // else
+            // Q.tipo:= E.tipo x Q1.tipo
             if (atrQ1.getTipo().equals("vacío")) {
                 atrQ.setTipo(atrE.getTipo());
             } else {
                 atrQ.setTipo(atrE.getTipo() + " " + atrQ1.getTipo());
             }
 
-            //ASem: Q.long:= 1 + Q1.long
+            // ASem: Q.long:= 1 + Q1.long
             atrQ.setLong(atrQ1.getLong());
 
         } else if (tokenActualCoincideCualquiera("PARENT_CERRAR")) {
 
-            printParse("52"); // 52.	Q → λ
-            //ASem: Q.tipo := vacío
+            printParse("52"); // 52. Q → λ
+            // ASem: Q.tipo := vacío
             atrQ.setTipo("vacío");
-            //ASem: Q.long := 0
+            // ASem: Q.long := 0
             atrQ.setLong(0);
 
         }
@@ -1768,9 +1931,9 @@ public class ASin {
         return atrQ;
     }
 
-    //Funcion Correspondiente al simbolo no terminal: V
-    //Acciones posibles:
-    //      	V → id W
+    // Funcion Correspondiente al simbolo no terminal: V
+    // Acciones posibles:
+    // V → id W
     private static Atributos V() {
 
         Atributos atrID;
@@ -1779,15 +1942,15 @@ public class ASin {
 
         if (tokenActualCoincideCualquiera("ID")) {
 
-            printParse("53");   //53.	V → id W
-            //ASin: id
+            printParse("53"); // 53. V → id W
+            // ASin: id
             atrID = match("ID");
             int idPos = atrID.getPos();
-            //ASin: W
+            // ASin: W
             atrW = W();
-            //ASem: V.tipo:=	if (W.tipo = vacío)
-            //      				then buscaTipoTS (id.pos)
-            //      			else buscaTipoTS (id.pos) x W.tipo
+            // ASem: V.tipo:= if (W.tipo = vacío)
+            // then buscaTipoTS (id.pos)
+            // else buscaTipoTS (id.pos) x W.tipo
 
             if (atrW.getTipo().equals("vacío")) {
                 atrV.setTipo(Procesador.gestorTS.getTipo(idPos));
@@ -1795,7 +1958,7 @@ public class ASin {
                 atrV.setTipo(Procesador.gestorTS.getTipo(idPos) + " " + atrW.getTipo());
             }
 
-            //ASem: V.long:= 1 + W.long 
+            // ASem: V.long:= 1 + W.long
             atrV.setLong(1 + atrW.getLong());
 
         }
@@ -1803,10 +1966,10 @@ public class ASin {
         return atrV;
     }
 
-    //Funcion Correspondiente al simbolo no terminal: W
-    //Acciones posibles:
-    //      	W → , id W1
-    //          W → λ	
+    // Funcion Correspondiente al simbolo no terminal: W
+    // Acciones posibles:
+    // W → , id W1
+    // W → λ
     private static Atributos W() {
 
         Atributos atrID;
@@ -1814,32 +1977,32 @@ public class ASin {
         Atributos atrW1;
         if (tokenActualCoincideCualquiera("COMA")) {
 
-            printParse("54");   //54.	W → , id W1
-            //ASin: ,
+            printParse("54"); // 54. W → , id W1
+            // ASin: ,
             match("COMA");
-            //ASin: id
+            // ASin: id
             atrID = match("ID");
             int idPos = atrID.getPos();
-            //ASin: W
+            // ASin: W
             atrW1 = W();
-            //ASem: W.tipo:=	if (W1.tipo = vacío)
-            //      				then buscaTipoTS (id.pos)
-            //      			else buscaTipoTS (id.pos) x W1.tipo
+            // ASem: W.tipo:= if (W1.tipo = vacío)
+            // then buscaTipoTS (id.pos)
+            // else buscaTipoTS (id.pos) x W1.tipo
             if (atrW1.getTipo().equals("vacío")) {
                 atrW.setTipo(Procesador.gestorTS.getTipo(idPos));
             } else {
                 atrW.setTipo(Procesador.gestorTS.getTipo(idPos) + " " + atrW.getTipo());
             }
-            //ASem: W.long:= 1 + W1.long 
+            // ASem: W.long:= 1 + W1.long
             atrW.setLong(atrW1.getLong() + 1);
 
         } else if (tokenActualCoincideCualquiera("PARENT_CERRAR")) {
 
-            printParse("55");   //55.	W → λ	
+            printParse("55"); // 55. W → λ
 
-            //ASem: W.tipo:= vacío
+            // ASem: W.tipo:= vacío
             atrW.setTipo("vacío");
-            //ASem: W.long:= 0
+            // ASem: W.long:= 0
             atrW.setLong(0);
 
         }
@@ -1848,26 +2011,27 @@ public class ASin {
         return atrW;
     }
 
-    //Funcion Correspondiente al simbolo no terminal: Y
-    //Acciones posibles:
-    //      	Y → E
-    //          Y → λ
+    // Funcion Correspondiente al simbolo no terminal: Y
+    // Acciones posibles:
+    // Y → E
+    // Y → λ
     private static Atributos Y() {
 
         Atributos atrY = new Atributos();
         Atributos atrE;
-        if (tokenActualCoincideCualquiera("PARENT_ABRIR", "MAS", "MENOS", "CADENA", "ENTERO", "FALSE", "ID", "MAX", "MIN", "NOT", "TRUE")) {
+        if (tokenActualCoincideCualquiera("PARENT_ABRIR", "MAS", "MENOS", "CADENA", "ENTERO", "FALSE", "ID", "MAX",
+                "MIN", "NOT", "TRUE")) {
 
-            printParse("56");//56.	Y → E
-            //ASin: E
+            printParse("56");// 56. Y → E
+            // ASin: E
             atrE = E();
-            //ASem: Y.tipo = E.tipo
+            // ASem: Y.tipo = E.tipo
             atrY.setTipo(atrE.getTipo());
 
         } else if (tokenActualCoincideCualquiera("PYC")) {
 
-            printParse("57"); //57.	Y → λ
-            //Asem: Y.tipo = vacío
+            printParse("57"); // 57. Y → λ
+            // Asem: Y.tipo = vacío
             atrY.setTipo("vacío");
         }
 
@@ -1875,28 +2039,29 @@ public class ASin {
         return atrY;
     }
 
-    //Funcion Correspondiente al simbolo no terminal: E
-    //Acciones posibles:
-    //      	E → F Eprima
+    // Funcion Correspondiente al simbolo no terminal: E
+    // Acciones posibles:
+    // E → F Eprima
     private static Atributos E() {
 
         Atributos atrE = new Atributos();
         Atributos atrF;
         Atributos atrEprima;
-        if (tokenActualCoincideCualquiera("PARENT_ABRIR", "MAS", "MENOS", "CADENA", "ENTERO", "FALSE", "ID", "MAX", "MIN", "NOT", "TRUE")) {
+        if (tokenActualCoincideCualquiera("PARENT_ABRIR", "MAS", "MENOS", "CADENA", "ENTERO", "FALSE", "ID", "MAX",
+                "MIN", "NOT", "TRUE")) {
 
-            printParse("58");   //58.	E → F Eprima
-            //ASin: F
+            printParse("58"); // 58. E → F Eprima
+            // ASin: F
             atrF = F();
-            //ASin: Eprima
+            // ASin: Eprima
             atrEprima = Eprima();
-            //ASem: 
-            // if (Eprima.tipo = vacío)  
-            //      E.tipo:= F.tipo  
-            //  else if (F.tipo = Eprima.tipo = lógico) 
-            //      E.tipo:= lógico 
-            //  else  
-            //      E.tipo:= tipo_error 
+            // ASem:
+            // if (Eprima.tipo = vacío)
+            // E.tipo:= F.tipo
+            // else if (F.tipo = Eprima.tipo = lógico)
+            // E.tipo:= lógico
+            // else
+            // E.tipo:= tipo_error
             if (atrEprima.getTipo().equals("vacío")) {
                 atrE.setTipo(atrF.getTipo());
 
@@ -1910,17 +2075,21 @@ public class ASin {
                 GestorError.writeError("semántico", "Error dentro de la expresión");
             }
 
+            // pablo:
+            atrE.setVal(atrF.getVal());
+            atrE.setPos(atrF.getPos());
+
         }
 
         debug(atrE);
         return atrE;
     }
 
-    //Funcion Correspondiente al simbolo no terminal: Eprima
-    //Acciones posibles:
-    //      	Eprima → or F Eprima
-    //          Eprima → xor F Eprima
-    //          Eprima → λ
+    // Funcion Correspondiente al simbolo no terminal: Eprima
+    // Acciones posibles:
+    // Eprima → or F Eprima
+    // Eprima → xor F Eprima
+    // Eprima → λ
     private static Atributos Eprima() {
 
         Atributos atrEprima = new Atributos();
@@ -1929,24 +2098,24 @@ public class ASin {
 
         if (tokenActualCoincideCualquiera("OR")) {
 
-            printParse("59");   //59.	Eprima → or F Eprima1
-            //ASin: or
+            printParse("59"); // 59. Eprima → or F Eprima1
+            // ASin: or
             match("OR");
-            //ASin: F
+            // ASin: F
             atrF = F();
-            //ASin: Eprima
+            // ASin: Eprima
             atrEprima1 = Eprima();
-            //ASem:
-            // if (Eprima1.tipo = vacío){ 
-            //     if(F.tipo = lógico) 
-            //          Eprima.tipo:= lógico 
-            //     else  
-            //          Eprima.tipo:= tipo_error  
-            // } else if (F.tipo = Eprima1.tipo = lógico){ 
-            //     E.prima.tipo:= lógico 
-            // }else { 
-            //     Eprima.tipo:= tipo_error 
-            //   }
+            // ASem:
+            // if (Eprima1.tipo = vacío){
+            // if(F.tipo = lógico)
+            // Eprima.tipo:= lógico
+            // else
+            // Eprima.tipo:= tipo_error
+            // } else if (F.tipo = Eprima1.tipo = lógico){
+            // E.prima.tipo:= lógico
+            // }else {
+            // Eprima.tipo:= tipo_error
+            // }
 
             if (atrEprima1.getTipo().equals("vacío")) {
                 if (atrF.getTipo().equals("lógico")) {
@@ -1963,24 +2132,24 @@ public class ASin {
 
         } else if (tokenActualCoincideCualquiera("XOR")) {
 
-            printParse("60");   //60.	Eprima → xor F Eprima
-            //ASin: xor
+            printParse("60"); // 60. Eprima → xor F Eprima
+            // ASin: xor
             match("XOR");
-            //ASin: F
+            // ASin: F
             atrF = F();
-            //ASin: Eprima
+            // ASin: Eprima
             atrEprima1 = Eprima();
-            //ASem:
-            // if (Eprima1.tipo = vacío){ 
-            //     if(F.tipo = lógico) 
-            //          Eprima.tipo:= lógico 
-            //     else  
-            //          Eprima.tipo:= tipo_error  
-            // } else if (F.tipo = Eprima1.tipo = lógico){ 
-            //     E.prima.tipo:= lógico 
-            // }else { 
-            //     Eprima.tipo:= tipo_error 
-            //   }
+            // ASem:
+            // if (Eprima1.tipo = vacío){
+            // if(F.tipo = lógico)
+            // Eprima.tipo:= lógico
+            // else
+            // Eprima.tipo:= tipo_error
+            // } else if (F.tipo = Eprima1.tipo = lógico){
+            // E.prima.tipo:= lógico
+            // }else {
+            // Eprima.tipo:= tipo_error
+            // }
 
             if (atrEprima1.getTipo().equals("vacío")) {
                 if (atrF.getTipo().equals("lógico")) {
@@ -1997,8 +2166,8 @@ public class ASin {
 
         } else if (tokenActualCoincideCualquiera("PARENT_CERRAR", "COMA", "PYC", "DO", "OF", "THEN", "TO")) {
 
-            printParse("61");   //61.	Eprima → λ
-            //ASem: Eprima.tipo = vacío
+            printParse("61"); // 61. Eprima → λ
+            // ASem: Eprima.tipo = vacío
             atrEprima.setTipo("vacío");
         }
 
@@ -2006,28 +2175,29 @@ public class ASin {
         return atrEprima;
     }
 
-    //Funcion Correspondiente al simbolo no terminal: F
-    //Acciones posibles:
-    //      	F → G Fprima
+    // Funcion Correspondiente al simbolo no terminal: F
+    // Acciones posibles:
+    // F → G Fprima
     private static Atributos F() {
 
         Atributos atrF = new Atributos();
         Atributos atrG;
         Atributos atrFprima;
-        if (tokenActualCoincideCualquiera("PARENT_ABRIR", "MAS", "MENOS", "CADENA", "ENTERO", "FALSE", "ID", "MAX", "MIN", "NOT", "TRUE")) {
+        if (tokenActualCoincideCualquiera("PARENT_ABRIR", "MAS", "MENOS", "CADENA", "ENTERO", "FALSE", "ID", "MAX",
+                "MIN", "NOT", "TRUE")) {
 
-            printParse("62");//62.	F → G Fprima
-            //ASin: G
+            printParse("62");// 62. F → G Fprima
+            // ASin: G
             atrG = G();
-            //ASin: Fprima
+            // ASin: Fprima
             atrFprima = Fprima();
-            //ASem: 
-            //if (Fprima.tipo = vacío) 
-            //   then F.tipo:= G.tipo 
-            //else if (G.tipo = lógico AND Fprima.tipo = lógico) 
-            //   then F.tipo:= lógico 
-            //else  
-            //   F.tipo:= tipo_error
+            // ASem:
+            // if (Fprima.tipo = vacío)
+            // then F.tipo:= G.tipo
+            // else if (G.tipo = lógico AND Fprima.tipo = lógico)
+            // then F.tipo:= lógico
+            // else
+            // F.tipo:= tipo_error
             if (atrFprima.getTipo().equals("vacío")) {
                 atrF.setTipo(atrG.getTipo());
             } else if (atrG.getTipo().equals("lógico") && atrFprima.getTipo().equals("lógico")) {
@@ -2035,15 +2205,19 @@ public class ASin {
             } else {
                 atrF.setTipo("tipo_error");
             }
+
+            // pablo:
+            atrF.setVal(atrG.getVal());
+            atrF.setPos(atrG.getPos());
         }
         debug(atrF);
         return atrF;
     }
 
-    //Funcion Correspondiente al simbolo no terminal: Fprima
-    //Acciones posibles:
-    //      	Fprima → and G Fprima
-    //          Fprima → λ
+    // Funcion Correspondiente al simbolo no terminal: Fprima
+    // Acciones posibles:
+    // Fprima → and G Fprima
+    // Fprima → λ
     private static Atributos Fprima() {
 
         Atributos atrFprima = new Atributos();
@@ -2051,25 +2225,25 @@ public class ASin {
         Atributos atrFprima1;
         if (tokenActualCoincideCualquiera("AND")) {
 
-            printParse("63");   //63.	Fprima → and G Fprima
-            //ASin: and
+            printParse("63"); // 63. Fprima → and G Fprima
+            // ASin: and
             match("AND");
-            //ASin: G
+            // ASin: G
             atrG = G();
-            //ASin: Fprima
+            // ASin: Fprima
             atrFprima1 = Fprima();
-            //ASem:
+            // ASem:
             // if (Fprima1.tipo = vacío) {
-            //     if (G.tipo = lógico){
-            //          Fprima.tipo:= lógico
-            //     } else {
-            //          Fprima.tipo:= tipo_error
-            //     }
-            //  } else if (G.tipo = Fprima1.tipo = lógico){
-            //     Fprima.tipo:= lógico
-            //  } else {
-            //     Fprima.tipo:= tipo_error
-            //   } 
+            // if (G.tipo = lógico){
+            // Fprima.tipo:= lógico
+            // } else {
+            // Fprima.tipo:= tipo_error
+            // }
+            // } else if (G.tipo = Fprima1.tipo = lógico){
+            // Fprima.tipo:= lógico
+            // } else {
+            // Fprima.tipo:= tipo_error
+            // }
 
             if (atrFprima1.getTipo().equals("vacío")) {
                 if (atrG.getTipo().equals("lógico")) {
@@ -2082,10 +2256,11 @@ public class ASin {
             } else {
                 atrFprima.setTipo("tipo_error");
             }
-        } else if (tokenActualCoincideCualquiera("PARENT_CERRAR", "COMA", "PYC", "DO", "OF", "OR", "THEN", "TO", "XOR")) {
+        } else if (tokenActualCoincideCualquiera("PARENT_CERRAR", "COMA", "PYC", "DO", "OF", "OR", "THEN", "TO",
+                "XOR")) {
 
-            printParse("64");   //64.	Fprima → λ
-            //ASem: Fprima.tipo = vacío
+            printParse("64"); // 64. Fprima → λ
+            // ASem: Fprima.tipo = vacío
             atrFprima.setTipo("vacío");
         }
 
@@ -2093,30 +2268,49 @@ public class ASin {
         return atrFprima;
     }
 
-    //Funcion Correspondiente al simbolo no terminal: G
-    //Acciones posibles:
-    //      	G → H Gprima
+    // Funcion Correspondiente al simbolo no terminal: G
+    // Acciones posibles:
+    // G → H Gprima
     private static Atributos G() {
 
         Atributos atrG = new Atributos();
         Atributos atrH;
         Atributos atrGprima;
-        if (tokenActualCoincideCualquiera("PARENT_ABRIR", "MAS", "MENOS", "CADENA", "ENTERO", "FALSE", "ID", "MAX", "MIN", "NOT", "TRUE")) {
+        if (tokenActualCoincideCualquiera("PARENT_ABRIR", "MAS", "MENOS", "CADENA", "ENTERO", "FALSE", "ID", "MAX",
+                "MIN", "NOT", "TRUE")) {
 
-            printParse("65");   //65.	G → H Gprima
+            printParse("65"); // 65. G → H Gprima
 
-            //ASin: H
+            // ASin: H
+            System.out.println("ANTES DE H");
+
             atrH = H();
-            //ASin: Gprima
+            // ASin: Gprima
+            System.out.println("ANTES DE GPRIMA");
+
+            // PABLO
+            if (atrH.getPos() == 0) { // o -1, revisar que es el atributo pos realmente
+                // es un entero
+                // operando1 = "#" + atrH.getVal();
+                operandoIzq = "#" + atrH.getVal();
+            } else { // es un id
+                operandoIzq = obtenerDireccion(atrH.getPos());
+            }
+
             atrGprima = Gprima();
-            //ASem:	
-            // if (Gprima.tipo = vacío) { 
-            //       G.tipo:= H.tipo  
-            //  } else if (H.tipo = entero AND Gprima.tipo = lógico){ 
-            //     G.tipo:= lógico 
-            //  } else { 
-            //     G.tipo:= tipo_error 
-            //  } 
+
+            // pablo:
+            atrG.setVal(atrH.getVal());
+            atrG.setPos(atrH.getPos());
+
+            // ASem:
+            // if (Gprima.tipo = vacío) {
+            // G.tipo:= H.tipo
+            // } else if (H.tipo = entero AND Gprima.tipo = lógico){
+            // G.tipo:= lógico
+            // } else {
+            // G.tipo:= tipo_error
+            // }
             if (atrGprima.getTipo().equals("vacío")) {
                 atrG.setTipo(atrH.getTipo());
             } else if (atrH.getTipo().equals("entero") && atrGprima.getTipo().equals("lógico")) {
@@ -2131,39 +2325,40 @@ public class ASin {
 
     }
 
-    //Funcion Correspondiente al simbolo no terminal: Gprima
-    //Acciones posibles:
-    //      	Gprima → = H Gprima
-    //          Gprima → <> H Gprima
-    //          Gprima → > H Gprima
-    //          Gprima → >= H Gprima
-    //          Gprima → < H Gprima
-    //          Gprima → <= H Gprima
-    //          Gprima → λ
+    // Funcion Correspondiente al simbolo no terminal: Gprima
+    // Acciones posibles:
+    // Gprima → = H Gprima
+    // Gprima → <> H Gprima
+    // Gprima → > H Gprima
+    // Gprima → >= H Gprima
+    // Gprima → < H Gprima
+    // Gprima → <= H Gprima
+    // Gprima → λ
     private static Atributos Gprima() {
-
+        System.out.println("eNTRA");
         Atributos atrGprima = new Atributos();
         Atributos atrH;
         Atributos atrGprima1;
         if (tokenActualCoincideCualquiera("IGUAL")) {
 
-            printParse("66");//66.	Gprima → = H Gprima
-            //ASin: =
+            printParse("66");// 66. Gprima → = H Gprima
+            // ASin: =
             match("IGUAL");
-            //ASin: H
+
+            // ASin: H
             atrH = H();
-            //ASin: Gprima
+            // ASin: Gprima
             atrGprima1 = Gprima();
-            //ASem: 
-            // if (Gprima1.tipo = vacío) { 
-            //     if (H.tipo = entero){ 
-            //          Gprima.tipo:= lógico 
-            //     } else { 
-            //          Gprima.tipo:= tipo_error  
-            //     } 
-            //    else { 
-            //     Gprima.tipo:= tipo_error  
-            //   } 
+            // ASem:
+            // if (Gprima1.tipo = vacío) {
+            // if (H.tipo = entero){
+            // Gprima.tipo:= lógico
+            // } else {
+            // Gprima.tipo:= tipo_error
+            // }
+            // else {
+            // Gprima.tipo:= tipo_error
+            // }
 
             if (atrGprima1.getTipo().equals("vacío")) {
                 if (atrH.getTipo().equals("entero")) {
@@ -2179,23 +2374,23 @@ public class ASin {
 
         } else if (tokenActualCoincideCualquiera("DISTINTO")) {
 
-            printParse("67");//67.	Gprima → <> H Gprima
-            //ASin: <>
+            printParse("67");// 67. Gprima → <> H Gprima
+            // ASin: <>
             match("DISTINTO");
-            //ASin: H
+            // ASin: H
             atrH = H();
-            //ASin: Gprima
+            // ASin: Gprima
             atrGprima1 = Gprima();
-            //ASem: 
-            // if (Gprima1.tipo = vacío) { 
-            //     if (H.tipo = entero){ 
-            //          Gprima.tipo:= lógico 
-            //     } else { 
-            //          Gprima.tipo:= tipo_error  
-            //     } 
-            // else { 
-            //     Gprima.tipo:= tipo_error  
-            //   } 
+            // ASem:
+            // if (Gprima1.tipo = vacío) {
+            // if (H.tipo = entero){
+            // Gprima.tipo:= lógico
+            // } else {
+            // Gprima.tipo:= tipo_error
+            // }
+            // else {
+            // Gprima.tipo:= tipo_error
+            // }
 
             if (atrGprima1.getTipo().equals("vacío")) {
                 if (atrH.getTipo().equals("entero")) {
@@ -2209,24 +2404,27 @@ public class ASin {
                 atrGprima.setTipo("tipo_error");
             }
         } else if (tokenActualCoincideCualquiera("MAYOR")) {
-
-            printParse("68");   //68.	Gprima → > H Gprima
-            //ASin: >
+            System.out.println("Por aqui");
+            printParse("68"); // 68. Gprima → > H Gprima
+            // ASin: >
             match("MAYOR");
-            //ASin: H
+
+            // ASin: H
             atrH = H();
-            //ASin: Gprima
+            // ASin: Gprima
+
             atrGprima1 = Gprima();
-            //ASem: 
-            // if (Gprima1.tipo = vacío) { 
-            //     if (H.tipo = entero){ 
-            //          Gprima.tipo:= lógico 
-            //     } else { 
-            //          Gprima.tipo:= tipo_error  
-            //     } 
-            // else { 
-            //     Gprima.tipo:= tipo_error  
-            //   } 
+
+            // ASem:
+            // if (Gprima1.tipo = vacío) {
+            // if (H.tipo = entero){
+            // Gprima.tipo:= lógico
+            // } else {
+            // Gprima.tipo:= tipo_error
+            // }
+            // else {
+            // Gprima.tipo:= tipo_error
+            // }
 
             if (atrGprima1.getTipo().equals("vacío")) {
                 if (atrH.getTipo().equals("entero")) {
@@ -2240,25 +2438,38 @@ public class ASin {
                 atrGprima.setTipo("tipo_error");
             }
 
+            String operando2;
+            if (atrH.getPos() == 0) {
+                operando2 = "#" + atrH.getVal();
+            } else {
+                operando2 = obtenerDireccion(atrH.getPos());
+            }
+
+            GenCodigoObjeto.emite("GOTO_MAY", operandoIzq, operando2, E_verdad);
+            GenCodigoObjeto.emite("GOTO", "-", "-", E_falso);
+
+            // atrGprima.setVal(atrH.getVal());
+            // atrGprima.setPos(atrH.getPos());
+
         } else if (tokenActualCoincideCualquiera("MAYOR_IGUAL")) {
 
-            printParse("69");//69.	Gprima → >= H Gprima
-            //ASin: >=
+            printParse("69");// 69. Gprima → >= H Gprima
+            // ASin: >=
             match("MAYOR_IGUAL");
-            //ASin: H
+            // ASin: H
             atrH = H();
-            //ASin: Gprima
+            // ASin: Gprima
             atrGprima1 = Gprima();
-            //ASem: 
-            // if (Gprima1.tipo = vacío) { 
-            //     if (H.tipo = entero){ 
-            //          Gprima.tipo:= lógico 
-            //     } else { 
-            //          Gprima.tipo:= tipo_error  
-            //     } 
-            // else { 
-            //     Gprima.tipo:= tipo_error  
-            //   } 
+            // ASem:
+            // if (Gprima1.tipo = vacío) {
+            // if (H.tipo = entero){
+            // Gprima.tipo:= lógico
+            // } else {
+            // Gprima.tipo:= tipo_error
+            // }
+            // else {
+            // Gprima.tipo:= tipo_error
+            // }
 
             if (atrGprima1.getTipo().equals("vacío")) {
                 if (atrH.getTipo().equals("entero")) {
@@ -2274,23 +2485,23 @@ public class ASin {
 
         } else if (tokenActualCoincideCualquiera("MENOR")) {
 
-            printParse("70");//70.	Gprima → < H Gprima
-            //ASin: <
+            printParse("70");// 70. Gprima → < H Gprima
+            // ASin: <
             match("MENOR");
-            //ASin: H
+            // ASin: H
             atrH = H();
-            //ASin: Gprima
+            // ASin: Gprima
             atrGprima1 = Gprima();
-            //ASem: 
-            // if (Gprima1.tipo = vacío) { 
-            //     if (H.tipo = entero){ 
-            //          Gprima.tipo:= lógico 
-            //     } else { 
-            //          Gprima.tipo:= tipo_error  
-            //     } 
-            // else { 
-            //     Gprima.tipo:= tipo_error  
-            //   } 
+            // ASem:
+            // if (Gprima1.tipo = vacío) {
+            // if (H.tipo = entero){
+            // Gprima.tipo:= lógico
+            // } else {
+            // Gprima.tipo:= tipo_error
+            // }
+            // else {
+            // Gprima.tipo:= tipo_error
+            // }
 
             if (atrGprima1.getTipo().equals("vacío")) {
                 if (atrH.getTipo().equals("entero")) {
@@ -2306,23 +2517,23 @@ public class ASin {
 
         } else if (tokenActualCoincideCualquiera("MENOR_IGUAL")) {
 
-            printParse("71");//71.	Gprima → <= H Gprima
-            //ASin: <=
+            printParse("71");// 71. Gprima → <= H Gprima
+            // ASin: <=
             match("MENOR_IGUAL");
-            //ASin: H
+            // ASin: H
             atrH = H();
-            //ASin: Gprima
+            // ASin: Gprima
             atrGprima1 = Gprima();
-            //ASem: 
-            // if (Gprima1.tipo = vacío) { 
-            //     if (H.tipo = entero){ 
-            //          Gprima.tipo:= lógico 
-            //     } else { 
-            //          Gprima.tipo:= tipo_error  
-            //     } 
-            // else { 
-            //     Gprima.tipo:= tipo_error  
-            //   } 
+            // ASem:
+            // if (Gprima1.tipo = vacío) {
+            // if (H.tipo = entero){
+            // Gprima.tipo:= lógico
+            // } else {
+            // Gprima.tipo:= tipo_error
+            // }
+            // else {
+            // Gprima.tipo:= tipo_error
+            // }
 
             if (atrGprima1.getTipo().equals("vacío")) {
                 if (atrH.getTipo().equals("entero")) {
@@ -2340,8 +2551,8 @@ public class ASin {
                 "PARENT_CERRAR", "COMA", "PYC",
                 "AND", "DO", "OF", "OR", "THEN", "TO", "XOR")) {
 
-            printParse("72");   //72.	Gprima → λ
-            //ASem:Gprima.tipo = vacío
+            printParse("72"); // 72. Gprima → λ
+            // ASem:Gprima.tipo = vacío
             atrGprima.setTipo("vacío");
         }
 
@@ -2349,31 +2560,32 @@ public class ASin {
         return atrGprima;
     }
 
-    //Funcion Correspondiente al simbolo no terminal: H
-    //Acciones posibles:
-    //      	H → I Hprima
+    // Funcion Correspondiente al simbolo no terminal: H
+    // Acciones posibles:
+    // H → I Hprima
     private static Atributos H() {
 
         Atributos atrH = new Atributos();
         Atributos atrI;
         Atributos atrHprima;
-        if (tokenActualCoincideCualquiera("PARENT_ABRIR", "MAS", "MENOS", "CADENA", "ENTERO", "FALSE", "ID", "MAX", "MIN", "NOT", "TRUE")) {
+        if (tokenActualCoincideCualquiera("PARENT_ABRIR", "MAS", "MENOS", "CADENA", "ENTERO", "FALSE", "ID", "MAX",
+                "MIN", "NOT", "TRUE")) {
 
-            printParse("73");//73.	H → I Hprima
-            //ASin: I
+            printParse("73");// 73. H → I Hprima
+            // ASin: I
             atrI = I();
-            //ASin: Hprima
+            // ASin: Hprima
             atrHprima = Hprima();
-            //ASem:
-            // if (Hprima.tipo = vacío) { 
-            //     H.tipo:= I.tipo  
-            // }else if (I.tipo = Hprima.tipo = cadena) { 
-            //     H.tipo:= cadena 
-            // }else if (I.tipo = entero AND Hprima.tipo = entero){ 
-            //     H.tipo:= entero 
-            // }else {  
-            //     H.tipo:= tipo_error 
-            // } 
+            // ASem:
+            // if (Hprima.tipo = vacío) {
+            // H.tipo:= I.tipo
+            // }else if (I.tipo = Hprima.tipo = cadena) {
+            // H.tipo:= cadena
+            // }else if (I.tipo = entero AND Hprima.tipo = entero){
+            // H.tipo:= entero
+            // }else {
+            // H.tipo:= tipo_error
+            // }
 
             if (atrHprima.getTipo().equals("vacío")) {
                 atrH.setTipo(atrI.getTipo());
@@ -2384,17 +2596,50 @@ public class ASin {
             } else {
                 atrH.setTipo("tipo_error");
             }
+
+            // pablo:
+            // - si atrHprima es lambda: evaluar posible expresion (caso: x := 4 + 5;)
+            // - en caso contrario, coge la posición atrI
+            if (!atrHprima.getTipo().equals("vacío")) {
+                int temp = nuevaTemporal();
+                String dir1, dir2, dirTemp;
+                dirTemp = obtenerDireccion(temp);
+                if (atrI.getPos() != 0) {
+                    dir1 = obtenerDireccion(atrI.getPos());
+                    if (atrHprima.getPos() != 0) {
+                        dir2 = obtenerDireccion(atrHprima.getPos());
+                        GenCodigoObjeto.emite("SUMA", dir1, dir2, dirTemp);
+                    } else {
+                        GenCodigoObjeto.emite("SUMA", dir1, "#" + atrHprima.getVal(), dirTemp);
+                    }
+                } else {
+                    if (atrHprima.getPos() != 0) {
+                        dir2 = obtenerDireccion(atrHprima.getPos());
+                        GenCodigoObjeto.emite("SUMA", "#" + atrI.getVal(), dir2, dirTemp);
+                    } else {
+                        GenCodigoObjeto.emite("SUMA", "#" + atrI.getVal(), "#" + atrHprima.getVal(),
+                                dirTemp);
+                    }
+                }
+                atrH.setPos(temp);
+            } else {
+                atrH.setPos(atrI.getPos());
+            }
+
+            // pablo:
+            atrH.setVal(atrI.getVal());
+
         }
         debug(atrH);
         return atrH;
 
     }
 
-    //Funcion Correspondiente al simbolo no terminal: Hprima
-    //Acciones posibles:
-    //      	Hprima → + I Hprima
-    //          Hprima → - I Hprima
-    //          Hprima → λ
+    // Funcion Correspondiente al simbolo no terminal: Hprima
+    // Acciones posibles:
+    // Hprima → + I Hprima
+    // Hprima → - I Hprima
+    // Hprima → λ
     private static Atributos Hprima() {
 
         Atributos atrHprima = new Atributos();
@@ -2403,25 +2648,62 @@ public class ASin {
 
         if (tokenActualCoincideCualquiera("MAS")) {
 
-            printParse("74");//74.	Hprima → + I Hprima
-            //ASin: +
+            printParse("74");// 74. Hprima → + I Hprima
+            // ASin: +
             match("MAS");
-            //ASin: I
+            // ASin: I
             atrI = I();
-            //ASin: Hprima
+            // ASin: Hprima
             atrHprima1 = Hprima();
-            //ASem:
-            // if (Hprima1.tipo = vacío){ 
-            //     if (I.tipo  {entero, cadena}){ 
-            //          Hprima.tipo:= I.tipo 
-            //     }else { 
-            //          Hprima.tipo:= tipo_error 
-            //     } 
-            // } else if (I.tipo = Hprima1.tipo  {entero, cadena}) { 
-            //     Hprima.tipo:= I.tipo 
-            // }else { 
-            //     Hprima.tipo:= tipo_error 
-            //   } 
+            // ASem:
+            // if (Hprima1.tipo = vacío){
+            // if (I.tipo  {entero, cadena}){
+            // Hprima.tipo:= I.tipo
+            // }else {
+            // Hprima.tipo:= tipo_error
+            // }
+            // } else if (I.tipo = Hprima1.tipo  {entero, cadena}) {
+            // Hprima.tipo:= I.tipo
+            // }else {
+            // Hprima.tipo:= tipo_error
+            // }
+
+            // pablo
+            // atrHprima.setVal(atrI.getVal());
+            // atrHprima.setPos(atrI.getPos());
+
+            // pablo: razonamiento similar al de la funcino H()
+            // pablo:
+            // - si atrHprima es lambda: evaluar posible expresion (caso: x := 4 + 5;)
+            // - en caso contrario, coge la posición atrI
+            if (!atrHprima1.getTipo().equals("vacío")) {
+                int temp = nuevaTemporal();
+                String dir1, dir2, dirTemp;
+                dirTemp = obtenerDireccion(temp);
+                if (atrI.getPos() != 0) {
+                    dir1 = obtenerDireccion(atrI.getPos());
+                    if (atrHprima1.getPos() != 0) {
+                        dir2 = obtenerDireccion(atrHprima1.getPos());
+                        GenCodigoObjeto.emite("SUMA", dir1, dir2, dirTemp);
+                    } else {
+                        GenCodigoObjeto.emite("SUMA", dir1, "#" + atrHprima1.getVal(), dirTemp);
+                    }
+                } else {
+                    if (atrHprima1.getPos() != 0) {
+                        dir2 = obtenerDireccion(atrHprima1.getPos());
+                        GenCodigoObjeto.emite("SUMA", "#" + atrI.getVal(), dir2, dirTemp);
+                    } else {
+                        GenCodigoObjeto.emite("SUMA", "#" + atrI.getVal(), "#" + atrHprima1.getVal(),
+                                dirTemp);
+                    }
+                }
+                System.out.println("Efectivamente va por aqui: " + temp);
+                atrHprima.setPos(temp);
+            } else {
+                atrHprima.setPos(atrI.getPos());
+            }
+            // pablo:
+            atrHprima.setVal(atrI.getVal());
 
             if (atrHprima1.getTipo().equals("vacío")) {
                 if (atrI.getTipo().equals("cadena") || atrI.getTipo().equals("entero")) {
@@ -2429,7 +2711,8 @@ public class ASin {
                 } else {
                     atrHprima.setTipo("tipo_error");
                 }
-            } else if (atrHprima1.getTipo().equals(atrI.getTipo()) && (atrI.getTipo().equals("entero") || atrI.getTipo().equals("cadena"))) {
+            } else if (atrHprima1.getTipo().equals(atrI.getTipo())
+                    && (atrI.getTipo().equals("entero") || atrI.getTipo().equals("cadena"))) {
                 atrHprima.setTipo(atrI.getTipo());
             } else {
                 atrHprima.setTipo("tipo_error");
@@ -2437,25 +2720,25 @@ public class ASin {
 
         } else if (tokenActualCoincideCualquiera("MENOS")) {
 
-            printParse("75");//75.	Hprima → - I Hprima
-            //ASin: -
+            printParse("75");// 75. Hprima → - I Hprima
+            // ASin: -
             match("MENOS");
-            //ASin: I
+            // ASin: I
             atrI = I();
-            //ASin: Hprima
+            // ASin: Hprima
             atrHprima1 = Hprima();
-            //ASem:
-            // if (Hprima1.tipo = vacío){ 
-            //     if (I.tipo  {entero, cadena}){ 
-            //          Hprima.tipo:= I.tipo 
-            //     }else { 
-            //          Hprima.tipo:= tipo_error 
-            //     } 
-            // } else if (I.tipo = Hprima1.tipo  {entero, cadena}) { 
-            //     Hprima.tipo:= I.tipo 
-            // }else { 
-            //     Hprima.tipo:= tipo_error 
-            //   } 
+            // ASem:
+            // if (Hprima1.tipo = vacío){
+            // if (I.tipo  {entero, cadena}){
+            // Hprima.tipo:= I.tipo
+            // }else {
+            // Hprima.tipo:= tipo_error
+            // }
+            // } else if (I.tipo = Hprima1.tipo  {entero, cadena}) {
+            // Hprima.tipo:= I.tipo
+            // }else {
+            // Hprima.tipo:= tipo_error
+            // }
 
             if (atrHprima1.getTipo().equals("vacío")) {
                 if (atrI.getTipo().equals("entero")) {
@@ -2473,8 +2756,8 @@ public class ASin {
                 "MAYOR_IGUAL", "MENOR", "MENOR_IGUAL", "IGUAL",
                 "DISTINTO", "AND", "DO", "OF", "OR", "THEN", "TO", "XOR")) {
 
-            printParse("76");   //76.	Hprima → λ
-            //Asem:Hprima.tipo = vacío
+            printParse("76"); // 76. Hprima → λ
+            // Asem:Hprima.tipo = vacío
             atrHprima.setTipo("vacío");
         }
 
@@ -2482,29 +2765,30 @@ public class ASin {
         return atrHprima;
     }
 
-    //Funcion Correspondiente al simbolo no terminal: I
-    //Acciones posibles:
-    //      	I → J Iprima
+    // Funcion Correspondiente al simbolo no terminal: I
+    // Acciones posibles:
+    // I → J Iprima
     private static Atributos I() {
 
         Atributos atrI = new Atributos();
         Atributos atrJ;
         Atributos atrIprima;
-        if (tokenActualCoincideCualquiera("PARENT_ABRIR", "MAS", "MENOS", "CADENA", "ENTERO", "FALSE", "ID", "MAX", "MIN", "NOT", "TRUE")) {
+        if (tokenActualCoincideCualquiera("PARENT_ABRIR", "MAS", "MENOS", "CADENA", "ENTERO", "FALSE", "ID", "MAX",
+                "MIN", "NOT", "TRUE")) {
 
-            printParse("77");   //77.	I → J Iprima
-            //ASin: J
+            printParse("77"); // 77. I → J Iprima
+            // ASin: J
             atrJ = J();
-            //ASin: Iprima
+            // ASin: Iprima
             atrIprima = Iprima();
-            //ASem:	
-            // if (Iprima.tipo = vacío) { 
-            //     I.tipo:= J.tipo  
-            // } else if (J.tipo = Iprima.tipo = entero) { 
-            //     I.tipo:= entero 
-            // } else { 
-            //     J.tipo:= tipo_error 
-            //   }
+            // ASem:
+            // if (Iprima.tipo = vacío) {
+            // I.tipo:= J.tipo
+            // } else if (J.tipo = Iprima.tipo = entero) {
+            // I.tipo:= entero
+            // } else {
+            // J.tipo:= tipo_error
+            // }
 
             if (atrIprima.getTipo().equals("vacío")) {
                 atrI.setTipo(atrJ.getTipo());
@@ -2513,17 +2797,21 @@ public class ASin {
             } else {
                 atrI.setTipo("tipo_error");
             }
+
+            // pablo:
+            atrI.setVal(atrJ.getVal());
+            atrI.setPos(atrJ.getPos());
         }
         debug(atrI);
         return atrI;
 
     }
 
-    //Funcion Correspondiente al simbolo no terminal: Iprima
-    //Acciones posibles:
-    //      	Iprima → * J Iprima
-    //          Iprima → / J Iprima
-    //          Iprima → mod J Iprima
+    // Funcion Correspondiente al simbolo no terminal: Iprima
+    // Acciones posibles:
+    // Iprima → * J Iprima
+    // Iprima → / J Iprima
+    // Iprima → mod J Iprima
     private static Atributos Iprima() {
 
         Atributos atrIprima = new Atributos();
@@ -2531,25 +2819,25 @@ public class ASin {
         Atributos atrIprima1;
         if (tokenActualCoincideCualquiera("PRODUCTO")) {
 
-            printParse("78"); //78.	Iprima → * J Iprima
-            //ASin: *
+            printParse("78"); // 78. Iprima → * J Iprima
+            // ASin: *
             match("PRODUCTO");
-            //ASin: J
+            // ASin: J
             atrJ = J();
-            //ASin: Iprima
+            // ASin: Iprima
             atrIprima1 = Iprima();
-            //Asem:  
-            // if (Iprima1.tipo = vacío) { 
-            //     if (J.tipo = entero) { 
-            //          Iprima.tipo:= entero 
-            //     }else {  
-            //          Iprima.tipo:= tipo_error 
-            //     } 
-            // }else if (J.tipo = Iprima1.tipo = entero){ 
-            //     Iprima.tipo:= entero 
-            // }else { 
-            //     Iprima.tipo:= tipo_error  
-            //  } 
+            // Asem:
+            // if (Iprima1.tipo = vacío) {
+            // if (J.tipo = entero) {
+            // Iprima.tipo:= entero
+            // }else {
+            // Iprima.tipo:= tipo_error
+            // }
+            // }else if (J.tipo = Iprima1.tipo = entero){
+            // Iprima.tipo:= entero
+            // }else {
+            // Iprima.tipo:= tipo_error
+            // }
 
             if (atrIprima1.getTipo().equals("vacío")) {
                 if (atrJ.getTipo().equals("entero")) {
@@ -2564,25 +2852,25 @@ public class ASin {
             }
         } else if (tokenActualCoincideCualquiera("DIVISION")) {
 
-            printParse("79"); //79.	Iprima → / J Iprima
-            //ASin: /
+            printParse("79"); // 79. Iprima → / J Iprima
+            // ASin: /
             match("DIVISION");
-            //ASin: J
+            // ASin: J
             atrJ = J();
-            //ASin: Iprima
+            // ASin: Iprima
             atrIprima1 = Iprima();
-            //Asem:  
-            // if (Iprima1.tipo = vacío) { 
-            //     if (J.tipo = entero) { 
-            //          Iprima.tipo:= entero 
-            //     }else {  
-            //          Iprima.tipo:= tipo_error 
-            //     } 
-            // }else if (J.tipo = Iprima1.tipo = entero){ 
-            //     Iprima.tipo:= entero 
-            // }else { 
-            //     Iprima.tipo:= tipo_error  
-            //  } 
+            // Asem:
+            // if (Iprima1.tipo = vacío) {
+            // if (J.tipo = entero) {
+            // Iprima.tipo:= entero
+            // }else {
+            // Iprima.tipo:= tipo_error
+            // }
+            // }else if (J.tipo = Iprima1.tipo = entero){
+            // Iprima.tipo:= entero
+            // }else {
+            // Iprima.tipo:= tipo_error
+            // }
 
             if (atrIprima1.getTipo().equals("vacío")) {
                 if (atrJ.getTipo().equals("entero")) {
@@ -2598,25 +2886,25 @@ public class ASin {
 
         } else if (tokenActualCoincideCualquiera("MOD")) {
 
-            printParse("80");//80.	Iprima → mod J Iprima
-            //ASin: mod
+            printParse("80");// 80. Iprima → mod J Iprima
+            // ASin: mod
             match("MOD");
-            //ASin: J
+            // ASin: J
             atrJ = J();
-            //ASin: Iprima
+            // ASin: Iprima
             atrIprima1 = Iprima();
-            //Asem:  
-            // if (Iprima1.tipo = vacío) { 
-            //     if (J.tipo = entero) { 
-            //          Iprima.tipo:= entero 
-            //     }else {  
-            //          Iprima.tipo:= tipo_error 
-            //     } 
-            // }else if (J.tipo = Iprima1.tipo = entero){ 
-            //     Iprima.tipo:= entero 
-            // }else { 
-            //     Iprima.tipo:= tipo_error  
-            //  } 
+            // Asem:
+            // if (Iprima1.tipo = vacío) {
+            // if (J.tipo = entero) {
+            // Iprima.tipo:= entero
+            // }else {
+            // Iprima.tipo:= tipo_error
+            // }
+            // }else if (J.tipo = Iprima1.tipo = entero){
+            // Iprima.tipo:= entero
+            // }else {
+            // Iprima.tipo:= tipo_error
+            // }
 
             if (atrIprima1.getTipo().equals("vacío")) {
                 if (atrJ.getTipo().equals("entero")) {
@@ -2635,8 +2923,8 @@ public class ASin {
                 "PYC", "MAYOR", "MAYOR_IGUAL", "MENOR", "MENOR_IGUAL", "IGUAL",
                 "DISTINTO", "AND", "DO", "OF", "OR", "THEN", "TO", "XOR")) {
 
-            printParse("81");   //81.	Iprima → λ
-            //Asem:Iprima.tipo = vacío
+            printParse("81"); // 81. Iprima → λ
+            // Asem:Iprima.tipo = vacío
             atrIprima.setTipo("vacío");
         }
 
@@ -2644,29 +2932,30 @@ public class ASin {
         return atrIprima;
     }
 
-    //Funcion Correspondiente al simbolo no terminal: J
-    //Acciones posibles:
-    //      	J → K Jprima
+    // Funcion Correspondiente al simbolo no terminal: J
+    // Acciones posibles:
+    // J → K Jprima
     private static Atributos J() {
 
         Atributos atrJ = new Atributos();
         Atributos atrK;
         Atributos atrJprima;
-        if (tokenActualCoincideCualquiera("PARENT_ABRIR", "MAS", "MENOS", "CADENA", "ENTERO", "FALSE", "ID", "MAX", "MIN", "NOT", "TRUE")) {
+        if (tokenActualCoincideCualquiera("PARENT_ABRIR", "MAS", "MENOS", "CADENA", "ENTERO", "FALSE", "ID", "MAX",
+                "MIN", "NOT", "TRUE")) {
 
-            printParse("82");   //82.	J → K Jprima
-            //ASin: K
+            printParse("82"); // 82. J → K Jprima
+            // ASin: K
             atrK = K();
-            //ASin: Jprima
+            // ASin: Jprima
             atrJprima = Jprima();
-            //ASem:	
-            // if (Jprima.tipo = vacío) { 
-            //     J.tipo:= K.tipo  
-            // }else if (K.tipo = Jprima.tipo = entero){ 
-            //     J.tipo:= entero 
-            // }else { 
-            //     J.tipo:= tipo_error 
-            // } 
+            // ASem:
+            // if (Jprima.tipo = vacío) {
+            // J.tipo:= K.tipo
+            // }else if (K.tipo = Jprima.tipo = entero){
+            // J.tipo:= entero
+            // }else {
+            // J.tipo:= tipo_error
+            // }
             if (atrJprima.getTipo().equals("vacío")) {
                 atrJ.setTipo(atrK.getTipo());
             } else if (atrK.getTipo().equals("entero") && atrJprima.getTipo().equals("entero")) {
@@ -2674,16 +2963,45 @@ public class ASin {
             } else {
                 atrJ.setTipo("tipo_error");
             }
+
+            // pablo: si atrJprima.tipo es distinto de lambda, operacion potencia
+            if (!atrJprima.getTipo().equals("vacío")) {
+                int temp = nuevaTemporal();
+                String dir1, dir2, dirTemp;
+                dirTemp = obtenerDireccion(temp);
+                if (atrK.getPos() != 0) {
+                    dir1 = obtenerDireccion(atrK.getPos());
+                    if (atrJprima.getPos() != 0) {
+                        dir2 = obtenerDireccion(atrJprima.getPos());
+                        GenCodigoObjeto.emite("POW", dir1, dir2, dirTemp);
+                    } else {
+                        GenCodigoObjeto.emite("POW", dir1, "#" + atrJprima.getVal(), dirTemp);
+                    }
+                } else {
+                    if (atrJprima.getPos() != 0) {
+                        dir2 = obtenerDireccion(atrJprima.getPos());
+                        GenCodigoObjeto.emite("POW", "#" + atrK.getVal(), dir2, dirTemp);
+                    } else {
+                        GenCodigoObjeto.emite("POW", "#" + atrK.getVal(), "#" + atrJprima.getVal(),
+                                dirTemp);
+                    }
+                }
+                atrJ.setPos(temp);
+            } else {
+                atrJ.setPos(atrK.getPos());
+            }
+            atrJ.setVal(atrK.getVal());
+
         }
         debug(atrJ);
         return atrJ;
 
     }
 
-    //Funcion Correspondiente al simbolo no terminal: Jprima
-    //Acciones posibles:
-    //      	Jprima → ^ K Jprima
-    //          Jprima → λ
+    // Funcion Correspondiente al simbolo no terminal: Jprima
+    // Acciones posibles:
+    // Jprima → ^ K Jprima
+    // Jprima → λ
     private static Atributos Jprima() {
 
         Atributos atrJprima = new Atributos();
@@ -2691,25 +3009,29 @@ public class ASin {
         Atributos atrJprima1;
         if (tokenActualCoincideCualquiera("POTENCIA")) {
 
-            printParse("83");   //83.	Jprima → ** K Jprima
-            //ASin: **
+            printParse("83"); // 83. Jprima → ** K Jprima
+            // ASin: **
             match("POTENCIA");
-            //ASin: K
+            // ASin: K
             atrK = K();
-            //ASin: Jprima
+            // ASin: Jprima
             atrJprima1 = Jprima();
-            //Asem: 
-            // if (Jprima1.tipo = vacío){ 
-            //     if (K.tipo = entero){ 
-            //          Jprima.tipo:= entero 
-            //     } else{ 
-            //          Jprima.tipo:= tipo_error 
-            //     } 
-            // } else if (K.tipo = Jprima1.tipo = entero){ 
-            //     Jprima.tipo:= entero 
-            // }else{ 
-            //     Jprima.tipo:= tipo_error 
-            // } 
+            // Asem:
+            // if (Jprima1.tipo = vacío){
+            // if (K.tipo = entero){
+            // Jprima.tipo:= entero
+            // } else{
+            // Jprima.tipo:= tipo_error
+            // }
+            // } else if (K.tipo = Jprima1.tipo = entero){
+            // Jprima.tipo:= entero
+            // }else{
+            // Jprima.tipo:= tipo_error
+            // }
+
+            // pablo:
+            atrJprima.setPos(atrK.getPos());
+            atrJprima.setVal(atrK.getVal());
 
             if (atrJprima1.getTipo().equals("entero") || atrJprima1.getTipo().equals("vacío")) {
                 if (atrK.getTipo().equals("entero")) {
@@ -2725,8 +3047,8 @@ public class ASin {
                 "DIVISION", "PYC", "MAYOR", "MAYOR_IGUAL", "MENOR", "MENOR_IGUAL", "IGUAL",
                 "DISTINTO", "AND", "DO", "MOD", "OF", "OR", "THEN", "TO", "XOR")) {
 
-            printParse("84");   //84.	Jprima → λ
-            //Asem:Jprima.tipo = vacío
+            printParse("84"); // 84. Jprima → λ
+            // Asem:Jprima.tipo = vacío
             atrJprima.setTipo("vacío");
         }
 
@@ -2734,12 +3056,12 @@ public class ASin {
         return atrJprima;
     }
 
-    //Funcion Correspondiente al simbolo no terminal: K
-    //Acciones posibles:
-    //      	K → not K
-    //          K → + K
-    //          K → - K
-    //          K → Z
+    // Funcion Correspondiente al simbolo no terminal: K
+    // Acciones posibles:
+    // K → not K
+    // K → + K
+    // K → - K
+    // K → Z
     private static Atributos K() {
 
         Atributos atrK = new Atributos();
@@ -2747,17 +3069,17 @@ public class ASin {
         Atributos atrZ;
         if (tokenActualCoincideCualquiera("NOT")) {
 
-            printParse("85");   //85.	K → not K
-            //ASin: not
+            printParse("85"); // 85. K → not K
+            // ASin: not
             match("NOT");
-            //ASin: K
+            // ASin: K
             atrK1 = K();
-            //ASem: 
-            // if (K1.tipo = lógico){ 
-            //     K.tipo:= lógico 
-            // }else{  
-            //     K.tipo:= tipo_error 
-            //   } 
+            // ASem:
+            // if (K1.tipo = lógico){
+            // K.tipo:= lógico
+            // }else{
+            // K.tipo:= tipo_error
+            // }
             if (atrK1.getTipo().equals("lógico")) {
                 atrK.setTipo("lógico");
             } else {
@@ -2766,17 +3088,17 @@ public class ASin {
 
         } else if (tokenActualCoincideCualquiera("MAS")) {
 
-            printParse("86");   //86.	K → + K
-            //ASin: +
+            printParse("86"); // 86. K → + K
+            // ASin: +
             match("MAS");
-            //ASin: K
+            // ASin: K
             atrK1 = K();
-            //ASem: 
-            // if (K1.tipo = entero){ 
-            //     K.tipo:= entero 
-            // }else{  
-            //     K.tipo:= tipo_error 
-            //   } 
+            // ASem:
+            // if (K1.tipo = entero){
+            // K.tipo:= entero
+            // }else{
+            // K.tipo:= tipo_error
+            // }
             if (atrK1.getTipo().equals("entero")) {
                 atrK.setTipo("entero");
             } else {
@@ -2785,45 +3107,49 @@ public class ASin {
 
         } else if (tokenActualCoincideCualquiera("MENOS")) {
 
-            printParse("87");   //87.	K → - K
-            //ASin: -
+            printParse("87"); // 87. K → - K
+            // ASin: -
             match("MENOS");
             atrK1 = K();
-            //ASem: 
-            // if (K1.tipo = entero){ 
-            //     K.tipo:= entero 
-            // }else{  
-            //     K.tipo:= tipo_error 
-            //   } 
+            // ASem:
+            // if (K1.tipo = entero){
+            // K.tipo:= entero
+            // }else{
+            // K.tipo:= tipo_error
+            // }
             if (atrK1.getTipo().equals("entero")) {
                 atrK.setTipo("entero");
             } else {
                 atrK.setTipo("tipo_error");
             }
 
-        } else if (tokenActualCoincideCualquiera("PARENT_ABRIR", "CADENA", "ENTERO", "FALSE", "ID", "MAX", "MIN", "TRUE")) {
+        } else if (tokenActualCoincideCualquiera("PARENT_ABRIR", "CADENA", "ENTERO", "FALSE", "ID", "MAX", "MIN",
+                "TRUE")) {
 
-            printParse("88");   //88.	K → Z
+            printParse("88"); // 88. K → Z
 
             atrZ = Z();
-            //ASem: K.tipo = Z.tipo
+            // ASem: K.tipo = Z.tipo
             atrK.setTipo(atrZ.getTipo());
+            // pablo:
+            atrK.setVal(atrZ.getVal());
+            atrK.setPos(atrZ.getPos());
         }
 
         debug(atrK);
         return atrK;
     }
 
-    //Funcion Correspondiente al simbolo no terminal: Z
-    //Acciones posibles:
-    //      	Z → ENTERO Zprima
-    //          Z → CADENA
-    //          Z → TRUE 
-    //          Z → FALSE
-    //          Z → ID LL Zprima
-    //          Z → ( E ) Zprima
-    //          Z → MAX ( L )
-    //          Z → MIN ( L )
+    // Funcion Correspondiente al simbolo no terminal: Z
+    // Acciones posibles:
+    // Z → ENTERO Zprima
+    // Z → CADENA
+    // Z → TRUE
+    // Z → FALSE
+    // Z → ID LL Zprima
+    // Z → ( E ) Zprima
+    // Z → MAX ( L )
+    // Z → MIN ( L )
     private static Atributos Z() {
 
         Atributos atrZ = new Atributos();
@@ -2832,20 +3158,22 @@ public class ASin {
         Atributos atrL;
         Atributos atrLL;
         Atributos atrE;
+        // pablo:
+        Atributos atrEnt;
         if (tokenActualCoincideCualquiera("ENTERO")) {
 
-            printParse("89");   //89.	Z → ENTERO Zprima
+            printParse("89"); // 89. Z → ENTERO Zprima
 
-            match("ENTERO");
+            atrEnt = match("ENTERO");
             atrZprima = Zprima();
-            //ASem: 
-            // if (Zprima.tipo = vacío){ 
-            //     Z.tipo:= entero 
-            // }else if (Zprima.tipo = entero){ 
-            //     Z.tipo:= lógico 
-            // }else { 
-            //     Z.tipo:= tipo_error} 
-            // } 
+            // ASem:
+            // if (Zprima.tipo = vacío){
+            // Z.tipo:= entero
+            // }else if (Zprima.tipo = entero){
+            // Z.tipo:= lógico
+            // }else {
+            // Z.tipo:= tipo_error}
+            // }
             if (atrZprima.getTipo().equals("vacío")) {
                 atrZ.setTipo("entero");
             } else if (atrZprima.getTipo().equals("entero")) {
@@ -2853,133 +3181,150 @@ public class ASin {
             } else {
                 atrZ.setTipo("tipo_error");
             }
+
+            // pablo:
+            atrZ.setVal(atrEnt.getVal());
+            atrZ.setPos(atrEnt.getPos());
+
         } else if (tokenActualCoincideCualquiera("CADENA")) {
 
-            printParse("90");   //90.	Z → CADENA
-            //ASin: CADENA
+            printParse("90"); // 90. Z → CADENA
+            // ASin: CADENA
             match("CADENA");
-            //ASem: Z.tipo:= cadena 
+            // ASem: Z.tipo:= cadena
             atrZ.setTipo("cadena");
 
         } else if (tokenActualCoincideCualquiera("TRUE")) {
 
-            printParse("91");   //91.	Z → TRUE
-            //ASin: TRUE
+            printParse("91"); // 91. Z → TRUE
+            // ASin: TRUE
             match("TRUE");
-            //ASem: Z.tipo:= lógico
+            // ASem: Z.tipo:= lógico
             atrZ.setTipo("lógico");
 
         } else if (tokenActualCoincideCualquiera("FALSE")) {
 
-            printParse("92");   //92.	Z → FALSE
-            //ASin: FALSE
+            printParse("92"); // 92. Z → FALSE
+            // ASin: FALSE
             match("FALSE");
-            //ASem: Z.tipo:= lógico
+            // ASem: Z.tipo:= lógico
             atrZ.setTipo("lógico");
 
         } else if (tokenActualCoincideCualquiera("ID")) {
-            printParse("93");//93.	Z → ID LL Zprima
-            //ASin: ID
+            printParse("93");// 93. Z → ID LL Zprima
+            // ASin: ID
             atrID = match("ID");
             int idPos = atrID.getPos();
-            //ASin: LL
+            // ASin: LL
             atrLL = LL();
-            //ASin: Zprima
+            // ASin: Zprima
             atrZprima = Zprima();
-            //id.tipo = BuscaTipoTS(id.pos)
+            // id.tipo = BuscaTipoTS(id.pos)
             atrID.setTipo(Procesador.gestorTS.getTipo(idPos));
 
-            //ASem:
-            // if (id.tipo = LL.tipo→t){ 
-            //     if (t ≠ vacío){ // id es función 
-            //          if (Zprima.tipo = vacío){ 
-            //              Z.tipo:= t 
-            //          }else if (Zprima.tipo = t = entero){ 
-            //              Z.tipo:= lógico 
-            //          }else{ 
-            //              Z.tipo:= tipo_error
-            //          }
-            //     }else{ 
-            //          Z.tipo:= tipo_error // la función tendría que devolver un valor
-            //     }
-            // } else if (LL.tipo = vacío){ // id es variable
-            //     if (Zprima.tipo = vacío)
-            //          Z.tipo:= id.tipo
-            //     }else if (Zprima.tipo = id.tipo = entero){
-            //          Z.tipo:= lógico
-            //     }else{
-            //          Z.tipo:= tipo_error
-            //     }
-            // } else{
-            //      Z.tipo:= tipo_error // variable con parámetros 
+            // ASem:
+            // if (id.tipo = LL.tipo→t){
+            // if (t ≠ vacío){ // id es función
+            // if (Zprima.tipo = vacío){
+            // Z.tipo:= t
+            // }else if (Zprima.tipo = t = entero){
+            // Z.tipo:= lógico
+            // }else{
+            // Z.tipo:= tipo_error
             // }
-            /* Para esta accion semantica se ha realizado primero la comprobación de el ID, y despues se realiza la comprobacion de Zprima,
-                por ello, el siguiente codigo difiere de la Accion Semantica anterior. */
+            // }else{
+            // Z.tipo:= tipo_error // la función tendría que devolver un valor
+            // }
+            // } else if (LL.tipo = vacío){ // id es variable
+            // if (Zprima.tipo = vacío)
+            // Z.tipo:= id.tipo
+            // }else if (Zprima.tipo = id.tipo = entero){
+            // Z.tipo:= lógico
+            // }else{
+            // Z.tipo:= tipo_error
+            // }
+            // } else{
+            // Z.tipo:= tipo_error // variable con parámetros
+            // }
+            /*
+             * Para esta accion semantica se ha realizado primero la comprobación de el ID,
+             * y despues se realiza la comprobacion de Zprima,
+             * por ello, el siguiente codigo difiere de la Accion Semantica anterior.
+             */
 
-
-            if (atrID.getTipo().equals("procedimiento") && Procesador.gestorTS.getValorAtributoCad(idPos, "etiqueta").equals("main")) {        //llamada a programa/main
+            if (atrID.getTipo().equals("procedimiento")
+                    && Procesador.gestorTS.getValorAtributoCad(idPos, "etiqueta").equals("main")) { // llamada a
+                                                                                                    // programa/main
                 GestorError.writeError("semántico", "LLamada ilegal al programa principal");
                 atrZ.setTipo("tipo_error");
-            } else if (atrID.getTipo().equals("procedure")) {       //llamada a procedure
+            } else if (atrID.getTipo().equals("procedure")) { // llamada a procedure
                 GestorError.writeError("semántico", "No se puede realizar una llamada a un PROCEDURE aquí");
                 atrZ.setTipo("tipo_error");
-            } else if (atrID.getTipo().equals("función")) {     //llamada a funcion
+            } else if (atrID.getTipo().equals("función")) { // llamada a funcion
                 String tipoRet = Procesador.gestorTS.getValorAtributoCad(idPos, "tipoRetorno");
                 int numParam = Procesador.gestorTS.getValorAtributoEnt(idPos, "numParametro");
 
                 if (numParam > 0) {
                     String[] llAtributos = atrLL.getTipo().split(" ");
                     String[] idAtbAtributos = Procesador.gestorTS.getValorAtributoLista(idPos, "tipoParametros");
-                    if (llAtributos.length == idAtbAtributos.length && Arrays.compare(llAtributos, idAtbAtributos) == 0) {
+                    if (llAtributos.length == idAtbAtributos.length
+                            && Arrays.compare(llAtributos, idAtbAtributos) == 0) {
                         atrZ.setTipo(tipoRet);
                     } else {
-                        GestorError.writeError("semántico", "Los parámetros de la función no coinciden.\n \t Se ha recibido: "
-                                + Arrays.toString(llAtributos) + "\n \t pero se deberia recibir: "
-                                + Arrays.toString(idAtbAtributos));
+                        GestorError.writeError("semántico",
+                                "Los parámetros de la función no coinciden.\n \t Se ha recibido: "
+                                        + Arrays.toString(llAtributos) + "\n \t pero se deberia recibir: "
+                                        + Arrays.toString(idAtbAtributos));
                         atrZ.setTipo("tipo_error");
                     }
                 } else if (numParam == 0 && atrLL.getLong() != 0) {
                     String[] sColaAtributos = atrLL.getTipo().split(" ");
 
-                    GestorError.writeError("semántico", "Los parámetros de la función no coinciden.\n \t Se ha recibido: "
-                            + Arrays.toString(sColaAtributos) + "\n \t pero no tiene ningún parámetro");
+                    GestorError.writeError("semántico",
+                            "Los parámetros de la función no coinciden.\n \t Se ha recibido: "
+                                    + Arrays.toString(sColaAtributos) + "\n \t pero no tiene ningún parámetro");
                     atrZ.setTipo("tipo_error");
                 } else {
                     atrZ.setTipo(tipoRet);
                 }
-            } else if (atrID.getTipo().equals("entero") || atrID.getTipo().equals("cadena") || atrID.getTipo().equals("lógico")) {
+            } else if (atrID.getTipo().equals("entero") || atrID.getTipo().equals("cadena")
+                    || atrID.getTipo().equals("lógico")) {
                 atrZ.setTipo(atrID.getTipo());
             }
 
-            //comprobacion de Zprima
+            // comprobacion de Zprima
             if (atrZprima.getTipo().equals("vacío")) {
-                //atrZ.tipo se queda igual, por que ya se ha asignado antes
+                // atrZ.tipo se queda igual, por que ya se ha asignado antes
             } else if (atrZprima.getTipo().equals("entero") && atrZ.getTipo().equals("entero")) {
                 atrZ.setTipo("lógico");
             } else {
                 atrZ.setTipo("tipo_error");
             }
 
+            // pablo: match devuelve pos, val no porque es id
+            atrZ.setPos(idPos);
+            System.out.println("VER AQUI: " + atrZ.getPos());
+
         } else if (tokenActualCoincideCualquiera("PARENT_ABRIR")) {
 
-            printParse("94");   //94.     Z → ( E ) Zprima
+            printParse("94"); // 94. Z → ( E ) Zprima
 
-            //ASin: (
+            // ASin: (
             match("PARENT_ABRIR");
-            //ASin: E
+            // ASin: E
             atrE = E();
-            //ASin: )
+            // ASin: )
             match("PARENT_CERRAR");
-            //ASin: Zprima
+            // ASin: Zprima
             atrZprima = Zprima();
-            //ASem:
-            // if (Zprima.tipo = vacío) { 
-            //     Z.tipo:= E.tipo 
-            // } else if (Zprima.tipo = E.tipo = entero){ 
-            //     Z.tipo:= lógico 
-            // }else{ 
-            //     Z.tipo:= tipo_error 
-            //   } 
+            // ASem:
+            // if (Zprima.tipo = vacío) {
+            // Z.tipo:= E.tipo
+            // } else if (Zprima.tipo = E.tipo = entero){
+            // Z.tipo:= lógico
+            // }else{
+            // Z.tipo:= tipo_error
+            // }
             if (atrZprima.getTipo().equals("vacío")) {
                 atrZ.setTipo(atrE.getTipo());
             } else if (atrZprima.getTipo().equals("entero") && atrE.getTipo().equals("entero")) {
@@ -2990,20 +3335,20 @@ public class ASin {
 
         } else if (tokenActualCoincideCualquiera("MAX")) {
 
-            printParse("95");//95.	Z → MAX ( L )
-            //ASin: MAX
+            printParse("95");// 95. Z → MAX ( L )
+            // ASin: MAX
             match("MAX");
-            //ASin: (
+            // ASin: (
             match("PARENT_ABRIR");
-            //ASin: L
+            // ASin: L
             atrL = L();
-            //ASin: )
+            // ASin: )
             match("PARENT_CERRAR");
-            //ASem: Z.tipo:= entero
+            // ASem: Z.tipo:= entero
             atrZ.setTipo("entero");
-            //ASem: for i:= 1 to L.long
-            //  		if (L.tipo[i] ≠ entero)
-            //  			then Z.tipo := tipo_error
+            // ASem: for i:= 1 to L.long
+            // if (L.tipo[i] ≠ entero)
+            // then Z.tipo := tipo_error
             if (!atrL.getTipo().equals("vacío")) {
                 String[] lista = atrL.getTipo().split(" ");
                 for (String item : lista) {
@@ -3015,20 +3360,20 @@ public class ASin {
 
         } else if (tokenActualCoincideCualquiera("MIN")) {
 
-            printParse("96");//96.	Z → MIN ( L )
-            //ASin: MIN
+            printParse("96");// 96. Z → MIN ( L )
+            // ASin: MIN
             match("MIN");
-            //ASin: (
+            // ASin: (
             match("PARENT_ABRIR");
-            //ASin: L
+            // ASin: L
             atrL = L();
-            //ASin: )
+            // ASin: )
             match("PARENT_CERRAR");
-            //ASem: Z.tipo:= entero
+            // ASem: Z.tipo:= entero
             atrZ.setTipo("entero");
-            //ASem: for i:= 1 to L.long
-            //  		if (L.tipo[i] ≠ entero)
-            //  			then Z.tipo:= tipo_error
+            // ASem: for i:= 1 to L.long
+            // if (L.tipo[i] ≠ entero)
+            // then Z.tipo:= tipo_error
             if (!atrL.getTipo().equals("vacío")) {
                 String[] lista = atrL.getTipo().split(" ");
                 for (String item : lista) {
@@ -3042,30 +3387,30 @@ public class ASin {
         return atrZ;
     }
 
-    //Funcion Correspondiente al simbolo no terminal: Zprima
-    //Acciones posibles:
-    //      	Zprima → in ( L )
-    //          Zprima → λ
+    // Funcion Correspondiente al simbolo no terminal: Zprima
+    // Acciones posibles:
+    // Zprima → in ( L )
+    // Zprima → λ
     private static Atributos Zprima() {
 
         Atributos atrZprima = new Atributos();
         Atributos atrL;
         if (tokenActualCoincideCualquiera("IN")) {
 
-            printParse("97");//97.	Zprima → in ( L )
-            //ASin: in
+            printParse("97");// 97. Zprima → in ( L )
+            // ASin: in
             match("IN");
-            //ASin: (
+            // ASin: (
             match("PARENT_ABRIR");
-            //ASin: L
+            // ASin: L
             atrL = L();
-            //ASin: )
+            // ASin: )
             match("PARENT_CERRAR");
-            //ASem: Zprima.tipo:= entero
+            // ASem: Zprima.tipo:= entero
             atrZprima.setTipo("entero");
-            //ASem: for i:= 1 to L.long
-            //  		if (L.tipo[i] ≠ entero)
-            //  			then Zprima.tipo := tipo_error
+            // ASem: for i:= 1 to L.long
+            // if (L.tipo[i] ≠ entero)
+            // then Zprima.tipo := tipo_error
             if (!atrL.getTipo().equals("vacío")) {
                 String[] lista = atrL.getTipo().split(" ");
                 for (String item : lista) {
@@ -3078,10 +3423,10 @@ public class ASin {
         } else if (tokenActualCoincideCualquiera(
                 "PARENT_CERRAR", "PRODUCTO", "POTENCIA", "MAS", "COMA", "MENOS",
                 "DIVISION", "PYC", "MAYOR", "MAYOR_IGUAL", "MENOR", "MENOR_IGUAL", "IGUAL",
-                "DISTINTO", "AND", "DO", "IN", "MOD", "OF", "OR", "THEN", "TO", "XOR")) {  //lambda
+                "DISTINTO", "AND", "DO", "IN", "MOD", "OF", "OR", "THEN", "TO", "XOR")) { // lambda
 
-            printParse("98"); //98.	Zprima → λ
-            //ASem:Zprima.tipo = vacío
+            printParse("98"); // 98. Zprima → λ
+            // ASem:Zprima.tipo = vacío
             atrZprima.setTipo("vacío");
         }
 
@@ -3089,9 +3434,9 @@ public class ASin {
         return atrZprima;
     }
 
-
     // Función auxiliar
-    // Compueba que el token actual coincide con el esperado, y avanza al siguiente token
+    // Compueba que el token actual coincide con el esperado, y avanza al siguiente
+    // token
     private static Atributos match(String esperado) {
 
         int esperadoInt = ALex.tok_id.get(esperado);
@@ -3100,19 +3445,19 @@ public class ASin {
             Atributos atbID = null;
             if (Objects.equals(tokenActual.getId(), ALex.tok_id.get("ID"))) {
                 atbID = new Atributos();
-                atbID.setPos((int) tokenActual.getAtributo());   // el índice en tabla de símbolos
+                atbID.setPos((int) tokenActual.getAtributo()); // el índice en tabla de símbolos
             }
             if (Objects.equals(tokenActual.getId(), ALex.tok_id.get("ENTERO"))) {
                 atbID = new Atributos();
-                atbID.setVal((int) tokenActual.getAtributo());   // el valor de numero
+                atbID.setVal((int) tokenActual.getAtributo()); // el valor de numero
             }
             if (Objects.equals(tokenActual.getId(), ALex.tok_id.get("CADENA"))) {
                 atbID = new Atributos();
-                atbID.setLex((String) tokenActual.getAtributo());   // el valor de la cadena
+                atbID.setLex((String) tokenActual.getAtributo()); // el valor de la cadena
             }
 
             tokenActual = ALex.generarToken();
-            //si generar un token da error se pone un placeholder y se lanza error
+            // si generar un token da error se pone un placeholder y se lanza error
             if (tokenActual == null) {
                 tokenActual = new Token(0, null);
                 throw new ErrorSintacticoException("");
@@ -3122,8 +3467,7 @@ public class ASin {
         } else {
             GestorError.writeError("sintáctico",
                     "Se esperaba " + esperado
-                    + " pero se encontró " + ALex.id_tok.get(tokenActual.getId())
-            );
+                            + " pero se encontró " + ALex.id_tok.get(tokenActual.getId()));
             throw new ErrorSintacticoException("");
         }
 
@@ -3140,17 +3484,17 @@ public class ASin {
         }
     }
 
-
     // Función auxiliar
-    // Comprueba que el token actual coincide con cualquiera de los tokens esperados, y gestiona el error en caso contrario
+    // Comprueba que el token actual coincide con cualquiera de los tokens
+    // esperados, y gestiona el error en caso contrario
     private static boolean tokenActualCoincideCualquiera(String... codigosToken) {
 
         boolean result = false;
 
-        //nombre de la funcion que lo llama
+        // nombre de la funcion que lo llama
         String funcionLlamada = Thread.currentThread().getStackTrace()[2].getMethodName();
 
-        //si cambia la funcion -> lanzar el error
+        // si cambia la funcion -> lanzar el error
         if (!huboCoincidencia && !funcionLlamada.equals(funcionAnterior)) {
             StringBuilder sb = new StringBuilder();
             sb.append("La lectura de ")
@@ -3164,24 +3508,23 @@ public class ASin {
             throw new ErrorSintacticoException("");
         }
 
-        //si es la primera vez que se entra a una funcion, se resetea el error
+        // si es la primera vez que se entra a una funcion, se resetea el error
         if (!funcionLlamada.equals(funcionAnterior)) {
             funcionAnterior = funcionLlamada;
             TokensPosibles = new Stack<>();
             huboCoincidencia = false;
         }
 
-        //guardar los tokens leidos
+        // guardar los tokens leidos
         for (String cToken : codigosToken) {
             TokensPosibles.add(cToken.toUpperCase());
         }
 
-        //comprobar coincidencias
+        // comprobar coincidencias
         for (String cToken : codigosToken) {
             boolean coincide = Objects.equals(
                     tokenActual.getId(),
-                    ALex.tok_id.get(cToken.toUpperCase())
-            );
+                    ALex.tok_id.get(cToken.toUpperCase()));
             result |= coincide;
         }
         if (result == true) {
@@ -3192,7 +3535,8 @@ public class ASin {
     }
 
     // Función auxiliar
-    // Inicializa la tabla de símbolos con los atributos necesarios para el análisis semántico
+    // Inicializa la tabla de símbolos con los atributos necesarios para el análisis
+    // semántico
     private static void iniciarTS() {
         // TS: Activar debug y crear atr
         Procesador.gestorTS.activarDebug();
@@ -3235,8 +3579,7 @@ public class ASin {
             String methodName = Thread.currentThread().getStackTrace()[2].getMethodName();
             System.out.println(
                     "Funcion: " + methodName
-                    + " Atributo de salida: " + (atr != null ? atr.toString() : "null")
-            );
+                            + " Atributo de salida: " + (atr != null ? atr.toString() : "null"));
         }
     }
 }
