@@ -5,10 +5,13 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.util.Arrays;
+import java.util.Iterator;
 import java.util.Objects;
 import java.util.Stack;
+import java.util.function.BiFunction;
 
 import traductor.GenCodigoObjeto;
+import tslib.TS_Gestor;
 import tslib.TS_Gestor.DescripcionAtributo;
 import tslib.TS_Gestor.Tabla;
 import tslib.TS_Gestor.TipoDatoAtributo;
@@ -41,6 +44,10 @@ public class ASin {
     private static String Blq_else;
     private static String operandoIzq;
     private static int numTemp = 0;
+    private static BiFunction<String, String, Boolean> compararCadenas = (str1, str2) -> str1.equals(str2);
+    private static int nParametros = 0;
+    private static String[] param;
+    private static Iterator<String> paramIterator;
 
     public static void setOutputParseFile(BufferedWriter parsePtr) {
         ptwParse = parsePtr;
@@ -110,23 +117,58 @@ public class ASin {
     }
 
     // pablo:
-    private static String obtenerDireccion(int idPos) {
-        int desp = Procesador.gestorTS.getValorAtributoEnt(idPos, "desplazamiento");
-        int modo = Procesador.gestorTS.getValorAtributoEnt(idPos, "modoParametro");
-        System.out.println("obtenerDireccion devolviendo... " + desp);
+    private static String obtenerDireccion(int idPos, int tipo, boolean soloDireccion) {
+        int desp = 0;
+        int modo = 0;
+        String desp_s = "";
+        String modo_s = "";
+        System.out.println("idPos - " + idPos);
+        if (tipo == 1) {
+            desp = Procesador.gestorTS.getValorAtributoEnt(idPos, "desplazamiento");
+            modo = Procesador.gestorTS.getValorAtributoEnt(idPos, "modoParametro");
+            System.out.println("desp - " + desp);
+            System.out.println("modo - " + modo);
+        } else if (tipo == 2) {
+            desp_s = Procesador.gestorTS.getValorAtributoCad(idPos, "desplazamiento");
+            modo_s = Procesador.gestorTS.getValorAtributoCad(idPos, "modoParametro");
+            System.out.println("desp_s - " + desp_s);
+            System.out.println("modo_s - " + modo_s);
+        }
+        System.out.println("obtenerDireccion devolviendo... (entero) " + desp);
+        System.out.println("obtenerDireccion devolviendo... (cadena) " + desp_s);
+
+        Procesador.gestorTS.show(Tabla.GLOBAL);
+        Procesador.gestorTS.show(Tabla.LOCAL);
         if (idPos > 0) {
             System.out.println("En realidad entra por aqui");
-            // pos positiva -> tabla GLOBAL -> IY
-            return "#" + desp + "[.IY]";
+            if (soloDireccion) {
+                if (desp == 0) {
+                    return ".IY";
+                } else {
+                    GenCodigoObjeto.emite("SUMA", "#" + desp, ".IY", ".R9");
+                    return ".R9";
+                }
+            } else {
+                // pos positiva -> tabla GLOBAL -> IY
+                return "#" + desp + "[.IY]";
+            }
         } else if (modo == 1) {
             // pos negativa + modo referencia -> indirección REVISAR
             GenCodigoObjeto.emite("MOVE", "#" + desp + "[.SP]", "-", ".R9");
             return "[.R9]";
         } else {
-            System.out.println("Entra por aqui");
             // pos negativa -> tabla LOCAL -> SP
-            return "#" + desp + "[.SP]";
+
+            System.out.println("Entra por aqui");
+            if (soloDireccion) {
+                GenCodigoObjeto.emite("SUMA", "#" + desp, ".SP", ".R9");
+                return ".R9";
+            }
+            {
+                return "#" + desp + "[.SP]";
+            }
         }
+
     }
 
     // Funcion Correspondiente al simbolo no terminal: P
@@ -149,22 +191,22 @@ public class ASin {
         D();
 
         // pablo
-        GenCodigoObjeto.emite("ORG", "-", "-", "0");
-        GenCodigoObjeto.emite("RES", String.valueOf(despGlobal), "-", "inicio_estaticas");
-
-        GenCodigoObjeto.emite("ORG", "-", "-", String.valueOf(despGlobal + 10));
-
-        GenCodigoObjeto.emite("ASIG", "#inicio_estaticas", "1", ".IY");
-        GenCodigoObjeto.emite("ASIG", "#inicio_pila", "1", ".SP");
-
+        GenCodigoObjeto.emite("ORG", "-", "inicio", "0");
+        GenCodigoObjeto.emite("ASIG", "#inicio_globales", "3", ".IY");
+        GenCodigoObjeto.emite("ASIG", "#inicio_pila", "3", ".SP");
         // pablo: añadimos salto a programa principal
         etiqInicio = GenCodigoObjeto.nuevaEtiqueta();
-        GenCodigoObjeto.emite("GOTO", "-", "-", etiqInicio);
+        GenCodigoObjeto.emite("GOTO", "-", "3", etiqInicio);
 
-        GenCodigoObjeto.emite("ORG", "-", "-", "300");
-        GenCodigoObjeto.emite("ETIQ", "-", "-", "inicio_pila");
+        GenCodigoObjeto.emite("ORG", "-", "inicio", "64");
 
-        GenCodigoObjeto.emite("ORG", "-", "-", "100");
+        GenCodigoObjeto.emite("ETIQ", String.valueOf(despGlobal), "3", "inicio_globales");
+
+        // GenCodigoObjeto.emite("ORG", "-", "-", "300");
+        // GenCodigoObjeto.emite("ETIQ", "-", "-", "inicio_pila");
+
+        GenCodigoObjeto.emite("ORG", "-", "-", "200");
+        // GenCodigoObjeto.emite("ETIQ", "-", "2", etiqInicio);
 
         // ASint: R
         Atributos atrR = R();
@@ -273,6 +315,9 @@ public class ASin {
             // ASem: despl_local:= 0
             despLocal = 0;
 
+            // pablo:
+            GenCodigoObjeto.setEnProcedimiento(true);
+
             // ASin: D
             D();
 
@@ -315,6 +360,8 @@ public class ASin {
             tsGlobal = true;
             // ASem: zona_decl:= true
             zonaDeclaracion = true;
+            // pablo:
+            GenCodigoObjeto.setEnProcedimiento(false);
         }
 
         debug(null);
@@ -336,7 +383,7 @@ public class ASin {
             printParse("7"); // 7. PR -> procedure id A ; D Bloque ;
 
             // pablo:
-            String etiqProcedure = GenCodigoObjeto.nuevaEtiqueta();
+            // String etiqProcedure = GenCodigoObjeto.nuevaEtiqueta();
 
             // ASin: procedure
             match("PROCEDURE");
@@ -353,6 +400,10 @@ public class ASin {
 
             // ASin: A
             atrA = A();
+
+            // pablo:
+            GenCodigoObjeto.setTamVariablesLocales(despLocal);
+
             // ASin: ;
             match("PYC");
 
@@ -381,7 +432,7 @@ public class ASin {
             zonaDeclaracion = false;
 
             // pablo:
-            GenCodigoObjeto.emite("ETIQ", "-", "-", etiqProcedure);
+            GenCodigoObjeto.emite("ETIQ", "-", "-", Procesador.gestorTS.getValorAtributoCad(idPos, "etiqueta"));
 
             // ASin: Bloque
             atrBloque = Bloque();
@@ -728,12 +779,13 @@ public class ASin {
             // InsertaAtributoPasoParametrosTS (id.pos, “valor”)
             // despl_local:= despl_local + T.ancho
             // }
-
+            System.out.println("Hola");
             if (atrX.getReferencia().equals("referencia")) {
+                System.out.println("Estableciendo parametro por referencia, " + idPos);
                 despLocal += 1;
                 Procesador.gestorTS.setValorAtributoEnt(idPos, "modoParametro", 1);
-
             } else if (atrX.getReferencia().equals("valor")) { // valor
+                System.out.println("Estableciendo parametro por valor, " + idPos);
                 despLocal += atrT.getAncho();
                 Procesador.gestorTS.setValorAtributoEnt(idPos, "modoParametro", 0);
             }
@@ -822,11 +874,13 @@ public class ASin {
             // despl_local:= despl_local + T.ancho
             // }
 
+            System.out.println("Hola");
             if (atrX.getReferencia().equals("referencia")) {
+                System.out.println("Estableciendo parametro por referencia, " + idPos);
                 despLocal += 1;
                 Procesador.gestorTS.setValorAtributoEnt(idPos, "modoParametro", 1);
-
             } else if (atrX.getReferencia().equals("valor")) { // valor
+                System.out.println("Estableciendo parametro por valor, " + idPos);
                 despLocal += atrT.getAncho();
                 Procesador.gestorTS.setValorAtributoEnt(idPos, "modoParametro", 0);
             }
@@ -1631,15 +1685,25 @@ public class ASin {
 
             // pablo:atrID
             if (atrScola.getAsig()) { // en principio solo un entero (falta implementar cadenas)
-                String dirDestino = obtenerDireccion(idPos);
-                if (atrScola.getPos() == 0) { // entero: p.e x := 5;
-                    GenCodigoObjeto.emite("ASIG", "#" + String.valueOf(atrScola.getVal()), "1", dirDestino);
-                } else { // identificador: p.e x := y;
-                    String dirFuente = obtenerDireccion(atrScola.getPos());
-                    GenCodigoObjeto.emite("ASIG", dirFuente, "2", dirDestino);
+                String dirDestino;
+                if (atrScola.getTipo().equals("entero")) {
+                    dirDestino = obtenerDireccion(idPos, 1, false);
+                    if (atrScola.getPos() == 0) { // entero: p.e x := 5;
+                        GenCodigoObjeto.emite("ASIG", "#" + String.valueOf(atrScola.getVal()), "1", dirDestino);
+                    } else { // identificador: p.e x := y;
+                        String dirFuente = obtenerDireccion(atrScola.getPos(), 1, false);
+                        GenCodigoObjeto.emite("ASIG", dirFuente, "2", dirDestino);
+                    }
+                } else if (atrScola.getTipo().equals("cadena")) {
+                    dirDestino = obtenerDireccion(idPos, 2, true);
+                    System.out.println("20260523: " + dirDestino);
+                    GenCodigoObjeto.emite("ASIG_CAD", atrScola.getEtiqueta(), "-", dirDestino);
                 }
             } else { // procedimiento
-                GenCodigoObjeto.emite("CALL", atrId.getEtiqueta(), "-", "-");
+                // numParam = Procesador.gestorTS.getValorAtributoEnt(idPos, "numParam");
+
+                param = Procesador.gestorTS.getValorAtributoLista(idPos, "pasoParametros");
+                GenCodigoObjeto.emite("CALL", Procesador.gestorTS.getValorAtributoCad(idPos, "etiqueta"), "-", "-");
 
             }
 
@@ -1791,8 +1855,8 @@ public class ASin {
             // pablo:
             atrScola.setVal(atrE.getVal());
             atrScola.setPos(atrE.getPos());
-
-            // pablo: si E -> 4 + 3, hay que guardar el valor en una "temporal"
+            atrScola.setLex(atrE.getLex());
+            atrScola.setEtiqueta(atrE.getEtiqueta());
 
         } else if (tokenActualCoincideCualquiera("PARENT_ABRIR", "PYC")) {
 
@@ -1865,6 +1929,25 @@ public class ASin {
             printParse("50"); // 50. L → E Q
             // ASin: E
             atrE = E();
+
+            // pablo:
+            String dirFuente;
+            paramIterator = Arrays.asList(param).iterator();
+            if (atrE.getTipo().equals("cadena")) {
+                dirFuente = obtenerDireccion(atrE.getPos(), 2, // false);
+                        compararCadenas.apply(paramIterator.next(), "referencia")); // revisar
+                nParametros++;
+                GenCodigoObjeto.emite("PARAM_CAD", dirFuente, "-", "-");
+            } else if (atrE.getTipo().equals("entero")) {
+                dirFuente = obtenerDireccion(atrE.getPos(), 1, false); // revisar
+                GenCodigoObjeto.emite("PARAM", dirFuente, "-", "-");
+            } else if (atrE.getTipo().equals("lógico")) {
+                // falta implementar lógicos
+            } else { // param ref
+                dirFuente = obtenerDireccion(atrE.getPos(), 1, true); // revisar
+                GenCodigoObjeto.emite("PARAM_REF", dirFuente, "-", "-");
+            }
+
             // ASin: Q
             atrQ = Q();
             // ASem:
@@ -1880,6 +1963,9 @@ public class ASin {
             }
             // ASem: L.long:= 1 + Q.long
             atrL.setLong(atrQ.getLong() + 1);
+
+            // pablo:
+            nParametros = 0;
 
         }
         debug(atrL);
@@ -2028,6 +2114,8 @@ public class ASin {
             // ASem: Y.tipo = E.tipo
             atrY.setTipo(atrE.getTipo());
 
+            atrY.setLex(atrE.getLex());
+
         } else if (tokenActualCoincideCualquiera("PYC")) {
 
             printParse("57"); // 57. Y → λ
@@ -2078,7 +2166,8 @@ public class ASin {
             // pablo:
             atrE.setVal(atrF.getVal());
             atrE.setPos(atrF.getPos());
-
+            atrE.setLex(atrF.getLex());
+            atrE.setEtiqueta(atrF.getEtiqueta());
         }
 
         debug(atrE);
@@ -2209,6 +2298,8 @@ public class ASin {
             // pablo:
             atrF.setVal(atrG.getVal());
             atrF.setPos(atrG.getPos());
+            atrF.setLex(atrG.getLex());
+            atrF.setEtiqueta(atrG.getEtiqueta());
         }
         debug(atrF);
         return atrF;
@@ -2294,7 +2385,7 @@ public class ASin {
                 // operando1 = "#" + atrH.getVal();
                 operandoIzq = "#" + atrH.getVal();
             } else { // es un id
-                operandoIzq = obtenerDireccion(atrH.getPos());
+                operandoIzq = obtenerDireccion(atrH.getPos(), 1, false);
             }
 
             atrGprima = Gprima();
@@ -2302,6 +2393,8 @@ public class ASin {
             // pablo:
             atrG.setVal(atrH.getVal());
             atrG.setPos(atrH.getPos());
+            atrG.setLex(atrH.getLex());
+            atrG.setEtiqueta(atrH.getEtiqueta());
 
             // ASem:
             // if (Gprima.tipo = vacío) {
@@ -2442,7 +2535,7 @@ public class ASin {
             if (atrH.getPos() == 0) {
                 operando2 = "#" + atrH.getVal();
             } else {
-                operando2 = obtenerDireccion(atrH.getPos());
+                operando2 = obtenerDireccion(atrH.getPos(), 1, false);
             }
 
             GenCodigoObjeto.emite("GOTO_MAY", operandoIzq, operando2, E_verdad);
@@ -2600,21 +2693,21 @@ public class ASin {
             // pablo:
             // - si atrHprima es lambda: evaluar posible expresion (caso: x := 4 + 5;)
             // - en caso contrario, coge la posición atrI
-            if (!atrHprima.getTipo().equals("vacío")) {
+            if (atrHprima.getTipo().equals("entero")) {
                 int temp = nuevaTemporal();
                 String dir1, dir2, dirTemp;
-                dirTemp = obtenerDireccion(temp);
+                dirTemp = obtenerDireccion(temp, 1, false);
                 if (atrI.getPos() != 0) {
-                    dir1 = obtenerDireccion(atrI.getPos());
+                    dir1 = obtenerDireccion(atrI.getPos(), 1, false);
                     if (atrHprima.getPos() != 0) {
-                        dir2 = obtenerDireccion(atrHprima.getPos());
+                        dir2 = obtenerDireccion(atrHprima.getPos(), 1, false);
                         GenCodigoObjeto.emite("SUMA", dir1, dir2, dirTemp);
                     } else {
                         GenCodigoObjeto.emite("SUMA", dir1, "#" + atrHprima.getVal(), dirTemp);
                     }
                 } else {
                     if (atrHprima.getPos() != 0) {
-                        dir2 = obtenerDireccion(atrHprima.getPos());
+                        dir2 = obtenerDireccion(atrHprima.getPos(), 1, false);
                         GenCodigoObjeto.emite("SUMA", "#" + atrI.getVal(), dir2, dirTemp);
                     } else {
                         GenCodigoObjeto.emite("SUMA", "#" + atrI.getVal(), "#" + atrHprima.getVal(),
@@ -2628,6 +2721,8 @@ public class ASin {
 
             // pablo:
             atrH.setVal(atrI.getVal());
+            atrH.setLex(atrI.getLex());
+            atrH.setEtiqueta(atrI.getEtiqueta());
 
         }
         debug(atrH);
@@ -2679,18 +2774,18 @@ public class ASin {
             if (!atrHprima1.getTipo().equals("vacío")) {
                 int temp = nuevaTemporal();
                 String dir1, dir2, dirTemp;
-                dirTemp = obtenerDireccion(temp);
+                dirTemp = obtenerDireccion(temp, 1, false);
                 if (atrI.getPos() != 0) {
-                    dir1 = obtenerDireccion(atrI.getPos());
+                    dir1 = obtenerDireccion(atrI.getPos(), 1, false);
                     if (atrHprima1.getPos() != 0) {
-                        dir2 = obtenerDireccion(atrHprima1.getPos());
+                        dir2 = obtenerDireccion(atrHprima1.getPos(), 1, false);
                         GenCodigoObjeto.emite("SUMA", dir1, dir2, dirTemp);
                     } else {
                         GenCodigoObjeto.emite("SUMA", dir1, "#" + atrHprima1.getVal(), dirTemp);
                     }
                 } else {
                     if (atrHprima1.getPos() != 0) {
-                        dir2 = obtenerDireccion(atrHprima1.getPos());
+                        dir2 = obtenerDireccion(atrHprima1.getPos(), 1, false);
                         GenCodigoObjeto.emite("SUMA", "#" + atrI.getVal(), dir2, dirTemp);
                     } else {
                         GenCodigoObjeto.emite("SUMA", "#" + atrI.getVal(), "#" + atrHprima1.getVal(),
@@ -2801,6 +2896,8 @@ public class ASin {
             // pablo:
             atrI.setVal(atrJ.getVal());
             atrI.setPos(atrJ.getPos());
+            atrI.setLex(atrJ.getLex());
+            atrI.setEtiqueta(atrJ.getEtiqueta());
         }
         debug(atrI);
         return atrI;
@@ -2965,21 +3062,21 @@ public class ASin {
             }
 
             // pablo: si atrJprima.tipo es distinto de lambda, operacion potencia
-            if (!atrJprima.getTipo().equals("vacío")) {
+            if (atrJprima.getTipo().equals("entero")) {
                 int temp = nuevaTemporal();
                 String dir1, dir2, dirTemp;
-                dirTemp = obtenerDireccion(temp);
+                dirTemp = obtenerDireccion(temp, 1, false);
                 if (atrK.getPos() != 0) {
-                    dir1 = obtenerDireccion(atrK.getPos());
+                    dir1 = obtenerDireccion(atrK.getPos(), 1, false);
                     if (atrJprima.getPos() != 0) {
-                        dir2 = obtenerDireccion(atrJprima.getPos());
+                        dir2 = obtenerDireccion(atrJprima.getPos(), 1, false);
                         GenCodigoObjeto.emite("POW", dir1, dir2, dirTemp);
                     } else {
                         GenCodigoObjeto.emite("POW", dir1, "#" + atrJprima.getVal(), dirTemp);
                     }
                 } else {
                     if (atrJprima.getPos() != 0) {
-                        dir2 = obtenerDireccion(atrJprima.getPos());
+                        dir2 = obtenerDireccion(atrJprima.getPos(), 1, false);
                         GenCodigoObjeto.emite("POW", "#" + atrK.getVal(), dir2, dirTemp);
                     } else {
                         GenCodigoObjeto.emite("POW", "#" + atrK.getVal(), "#" + atrJprima.getVal(),
@@ -2991,6 +3088,8 @@ public class ASin {
                 atrJ.setPos(atrK.getPos());
             }
             atrJ.setVal(atrK.getVal());
+            atrJ.setLex(atrK.getLex());
+            atrJ.setEtiqueta(atrK.getEtiqueta());
 
         }
         debug(atrJ);
@@ -3131,9 +3230,12 @@ public class ASin {
             atrZ = Z();
             // ASem: K.tipo = Z.tipo
             atrK.setTipo(atrZ.getTipo());
+
             // pablo:
             atrK.setVal(atrZ.getVal());
             atrK.setPos(atrZ.getPos());
+            atrK.setLex(atrZ.getLex());
+            atrK.setEtiqueta(atrZ.getEtiqueta());
         }
 
         debug(atrK);
@@ -3160,11 +3262,13 @@ public class ASin {
         Atributos atrE;
         // pablo:
         Atributos atrEnt;
+        Atributos atrCad;
         if (tokenActualCoincideCualquiera("ENTERO")) {
 
             printParse("89"); // 89. Z → ENTERO Zprima
 
-            atrEnt = match("ENTERO");
+            atrEnt = match("ENTERO"); // PABLO --- MODIFICACIÓN SOBRE EL CÓDIGO ORIGINAL PARA RECOGER LOS ATRIBUTOS DE
+                                      // LA LLAMADA A MATCH
             atrZprima = Zprima();
             // ASem:
             // if (Zprima.tipo = vacío){
@@ -3190,9 +3294,15 @@ public class ASin {
 
             printParse("90"); // 90. Z → CADENA
             // ASin: CADENA
-            match("CADENA");
+            atrCad = match("CADENA"); // PABLO --- MODIFICACIÓN SOBRE EL CÓDIGO ORIGINAL PARA RECOGER LOS ATRIBUTOS DE
+                                      // LA LLAMADA A MATCH
             // ASem: Z.tipo:= cadena
             atrZ.setTipo("cadena");
+
+            // pablo:
+            String etiq = GenCodigoObjeto.nuevaEtiqueta();
+            GenCodigoObjeto.emite("DATA", etiq, "-", atrCad.getLex());
+            atrZ.setEtiqueta(etiq);
 
         } else if (tokenActualCoincideCualquiera("TRUE")) {
 
